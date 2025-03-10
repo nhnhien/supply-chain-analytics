@@ -50,54 +50,70 @@ const DemandForecastPage = ({ data }) => {
       );
       
       if (categoryForecast) {
-        // Create forecast data points (mock data - would come from real API)
-        const currentDate = new Date();
+        // Get historical data for the selected category
+        const categoryData = data.categoryData && data.categoryData[selectedCategory] ? 
+          data.categoryData[selectedCategory] : [];
+        
+        // Process historical data
+        const historicalPoints = categoryData
+          .filter(point => point && (point.count || point.order_count))
+          .map(point => {
+            const date = new Date(point.date || 
+              new Date(point.order_year || point.year, 
+                       (point.order_month || point.month) - 1, 1));
+            
+            return {
+              date: date,
+              value: point.count || point.order_count || 0,
+              type: 'historical'
+            };
+          });
+        
+        // Sort by date
+        historicalPoints.sort((a, b) => a.date - b.date);
+        
+        // Process forecast data
         const forecastPoints = [];
         
-        // Historical data (last 6 months)
-        for (let i = 6; i > 0; i--) {
-          const date = new Date(currentDate);
-          date.setMonth(date.getMonth() - i);
+        if (historicalPoints.length > 0) {
+          // Get the last historical data point
+          const lastHistoricalPoint = historicalPoints[historicalPoints.length - 1];
+          const lastDate = new Date(lastHistoricalPoint.date);
+          const lastValue = lastHistoricalPoint.value;
           
-          forecastPoints.push({
-            date: date,
-            value: Math.round((categoryForecast.avg_historical_demand || 100) * (0.9 + Math.random() * 0.2)),
-            type: 'historical'
-          });
-        }
-        
-        // Current month
-        forecastPoints.push({
-          date: currentDate,
-          value: Math.round(categoryForecast.avg_historical_demand || 100),
-          type: 'historical'
-        });
-        
-        // Forecast data (next 6 months)
-        for (let i = 1; i <= 6; i++) {
-          const date = new Date(currentDate);
-          date.setMonth(date.getMonth() + i);
-          
-          // Calculate forecasted value with growth rate with null checks
+          // Use forecast metrics to generate future points
           const growthRate = categoryForecast.growth_rate || 0;
-          const forecastDemand = categoryForecast.forecast_demand || 100;
-          const growthFactor = 1 + (growthRate / 100) * (i / 6);
-          const forecastedValue = Math.round(forecastDemand * growthFactor);
+          const mape = categoryForecast.mape || 15; // Use MAPE for confidence intervals
           
-          // Calculate confidence intervals with null checks
-          const mape = categoryForecast.mape || 10;
-          const margin = forecastedValue * (mape / 100) * (i / 3);
-          
-          forecastPoints.push({
-            date: date,
-            value: forecastedValue,
-            lowerBound: Math.max(0, Math.round(forecastedValue - margin)),
-            upperBound: Math.round(forecastedValue + margin),
-            type: 'forecast'
-          });
+          for (let i = 1; i <= 6; i++) {
+            const forecastDate = new Date(lastDate);
+            forecastDate.setMonth(forecastDate.getMonth() + i);
+            
+            // Calculate forecasted value using growth rate
+            const forecastValue = lastValue * (1 + (growthRate / 100) * (i / 6));
+            
+            // Calculate confidence intervals using MAPE
+            const marginOfError = forecastValue * (mape / 100) * (i / 3); // Increasing uncertainty over time
+            
+            forecastPoints.push({
+              date: forecastDate,
+              value: forecastValue,
+              lowerBound: Math.max(0, forecastValue - marginOfError),
+              upperBound: forecastValue + marginOfError,
+              type: 'forecast'
+            });
+          }
         }
         
-        setForecastData(forecastPoints);
+        // Combine historical and forecast data
+        setForecastData([...historicalPoints, ...forecastPoints]);
+        
+        // Add a note about estimation method if we had to generate the forecast
+        if (forecastPoints.length > 0 && !categoryForecast.forecast_values) {
+          setForecastNote('Note: Forecast visualization is based on growth rate estimation. For precise values, please refer to the statistics below.');
+        } else {
+          setForecastNote('');
+        }
       }
     }
   }, [selectedCategory, data]);

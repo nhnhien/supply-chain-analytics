@@ -232,48 +232,69 @@ function extractSellerMetrics(sellerClusters) {
  * @returns {Object} - Object with calculated KPIs
  */
 function calculateKPIs(demandData, sellerData, forecastData) {
-  // Average processing time
-  let totalProcessingTime = 0;
-  let sellerCount = 0;
-  
-  sellerData.forEach(seller => {
-    if (seller.avg_processing_time) {
-      totalProcessingTime += seller.avg_processing_time;
-      sellerCount++;
-    }
-  });
-  
-  const avgProcessingTime = sellerCount > 0 ? totalProcessingTime / sellerCount : 0;
-  
-  // Average forecast growth rate
-  let totalGrowthRate = 0;
-  let forecastCount = 0;
-  
-  forecastData.forEach(forecast => {
-    if (forecast.growth_rate) {
-      totalGrowthRate += forecast.growth_rate;
-      forecastCount++;
-    }
-  });
-  
-  const avgGrowthRate = forecastCount > 0 ? totalGrowthRate / forecastCount : 0;
-  
-  // Total demand
-  let totalDemand = 0;
-  
-  demandData.forEach(row => {
-    totalDemand += row.count || row.order_count || 0;
-  });
-  
-  return {
-    avg_processing_time: avgProcessingTime,
-    forecast_growth: avgGrowthRate,
-    total_demand: totalDemand,
-    on_time_delivery: 92.5, // Example value (would come from real data)
-    perfect_order_rate: 89.3, // Example value (would come from real data)
-    inventory_turnover: 12.4 // Example value (would come from real data)
-  };
-}
+    // Average processing time
+    let totalProcessingTime = 0;
+    let sellerCount = 0;
+    
+    sellerData.forEach(seller => {
+      if (seller.avg_processing_time) {
+        totalProcessingTime += seller.avg_processing_time;
+        sellerCount++;
+      }
+    });
+    
+    const avgProcessingTime = sellerCount > 0 ? totalProcessingTime / sellerCount : 0;
+    
+    // Average forecast growth rate
+    let totalGrowthRate = 0;
+    let forecastCount = 0;
+    
+    forecastData.forEach(forecast => {
+      if (forecast.growth_rate) {
+        totalGrowthRate += forecast.growth_rate;
+        forecastCount++;
+      }
+    });
+    
+    const avgGrowthRate = forecastCount > 0 ? totalGrowthRate / forecastCount : 0;
+    
+    // Total demand
+    let totalDemand = 0;
+    
+    demandData.forEach(row => {
+      totalDemand += row.count || row.order_count || 0;
+    });
+    
+    // Try to load additional KPIs from API if available
+    return fetch('/api/supply-chain-kpis')
+      .then(response => response.json())
+      .then(apiKpis => {
+        return {
+          avg_processing_time: avgProcessingTime,
+          forecast_growth: avgGrowthRate,
+          total_demand: totalDemand,
+          on_time_delivery: apiKpis.on_time_delivery || 85.0,
+          perfect_order_rate: apiKpis.perfect_order_rate || 80.0,
+          inventory_turnover: apiKpis.inventory_turnover || 8.0,
+          // Keep track of which values are estimated
+          estimated_fields: apiKpis.estimated_fields || 
+            ['on_time_delivery', 'perfect_order_rate', 'inventory_turnover']
+        };
+      })
+      .catch(error => {
+        console.warn('Error loading KPIs from API, using calculated values:', error);
+        // Use derived estimates if API fails
+        return {
+          avg_processing_time: avgProcessingTime,
+          forecast_growth: avgGrowthRate,
+          total_demand: totalDemand,
+          on_time_delivery: 85.0, // Industry benchmark
+          perfect_order_rate: 80.0, // Industry benchmark
+          inventory_turnover: 8.0, // Industry benchmark
+          estimated_fields: ['on_time_delivery', 'perfect_order_rate', 'inventory_turnover']
+        };
+      });
+  }
 
 /**
  * API function to fetch forecasts for a specific category
