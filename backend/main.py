@@ -19,9 +19,6 @@ from datetime import datetime
 # Import our modules (you would need the other Python files in the same directory)
 from arima_forecasting import DemandForecaster
 from visualization_module import SupplyChainVisualizer
-from spark_implementation import create_spark_session, load_ecommerce_data, process_orders, build_unified_supply_chain_dataset
-from spark_implementation import analyze_product_demand, analyze_seller_efficiency, analyze_geographical_patterns
-from spark_implementation import analyze_supply_chain_metrics, generate_supply_chain_recommendations
 from data_preprocessing import preprocess_order_data, preprocess_product_data, preprocess_order_items, calculate_performance_metrics
 
 def calculate_delivery_days(orders, supply_chain=None):
@@ -124,9 +121,11 @@ def parse_arguments():
     parser = argparse.ArgumentParser(description='Supply Chain Analytics for Demand Forecasting')
     parser.add_argument('--data-dir', type=str, default='.', help='Directory containing data files')
     parser.add_argument('--output-dir', type=str, default='./output', help='Directory to save output files')
-    parser.add_argument('--top-n', type=int, default=5, help='Number of top categories to analyze')
+    parser.add_argument('--top-n', type=int, default=15, help='Number of top categories to analyze')
     parser.add_argument('--forecast-periods', type=int, default=6, help='Number of periods to forecast')
-    parser.add_argument('--use-spark', action='store_true', help='Use Apache Spark for processing')
+    parser.add_argument('--use-auto-arima', action='store_true', help='Use auto ARIMA parameter selection')
+    parser.add_argument('--seasonal', action='store_true', help='Include seasonality in the model')
+    parser.add_argument('--supplier-clusters', type=int, default=3, help='Number of supplier clusters to create')
     
     return parser.parse_args()
 
@@ -135,6 +134,37 @@ def ensure_directory(directory):
     if not os.path.exists(directory):
         os.makedirs(directory)
         print(f"Created directory: {directory}")
+
+def get_top_categories(data, limit=15):
+    """
+    Get top categories by total demand
+    
+    Args:
+        data: Monthly demand data
+        limit: Maximum number of categories to return
+        
+    Returns:
+        Array of top category names
+    """
+    # Group by category and sum the demand
+    category_totals = {}
+    
+    for _, row in data.iterrows():
+        category = row.get('product_category_name')
+        count = float(row.get('count', 0) or row.get('order_count', 0) or 0)
+        
+        if category and category not in category_totals:
+            category_totals[category] = 0
+        
+        if category:
+            category_totals[category] += count
+    
+    # Sort categories by total demand and get top N
+    return [category for category, _ in sorted(
+        category_totals.items(), 
+        key=lambda item: item[1], 
+        reverse=True
+    )[:limit]]
 
 def run_pandas_analysis(args):
     """
@@ -191,15 +221,34 @@ def run_pandas_analysis(args):
     print("Analyzing monthly demand patterns...")
     monthly_demand = supply_chain.groupby(['product_category_name', 'order_year', 'order_month']).size().reset_index(name='count')
     
-    # Get top categories
-    top_categories = monthly_demand.groupby('product_category_name')['count'].sum().sort_values(ascending=False).head(args.top_n).index.tolist()
+    # Save monthly demand data
+    monthly_demand.to_csv(os.path.join(args.output_dir, 'monthly_demand.csv'), index=False)
+    
+    # Get top categories by volume, not alphabetically
+    top_categories = get_top_categories(monthly_demand, args.top_n)
+    print(f"Top {len(top_categories)} categories by volume: {', '.join(top_categories)}")
+    
+    # Save top categories for reference
+    pd.DataFrame({'product_category_name': top_categories}).to_csv(
+        os.path.join(args.output_dir, 'top_categories.csv'), index=False
+    )
     
     # Run time series forecasting
     print("Running time series forecasting...")
-    monthly_demand.to_csv(os.path.join(args.output_dir, 'monthly_demand.csv'), index=False)
-    
     forecaster = DemandForecaster(os.path.join(args.output_dir, 'monthly_demand.csv'))
     forecaster.preprocess_data()
+    
+    # Use auto ARIMA if specified
+    if args.use_auto_arima:
+        print("Using auto ARIMA for parameter selection")
+        forecaster.use_auto_arima = True
+    
+    # Include seasonality if specified
+    if args.seasonal:
+        print("Including seasonality in the model")
+        forecaster.seasonal = True
+        forecaster.seasonal_period = 12  # Monthly data
+    
     forecasts = forecaster.run_all_forecasts(top_n=args.top_n, periods=args.forecast_periods)
     
     # Generate forecast report
@@ -211,31 +260,100 @@ def run_pandas_analysis(args):
         'order_id': 'count',
         'processing_time': 'mean',
         'delivery_days': 'mean',
-        'price': 'sum'
+        'price': 'sum',
+        'shipping_charges': 'sum'
     }).reset_index()
     
-    seller_performance.columns = ['seller_id', 'order_count', 'avg_processing_time', 'avg_delivery_days', 'total_sales']
+    seller_performance.columns = ['seller_id', 'order_count', 'avg_processing_time', 'avg_delivery_days', 'total_sales', 'shipping_costs']
     
-    # Perform manual clustering based on sales and processing time
-    q75_sales = seller_performance['total_sales'].quantile(0.75)
-    q25_sales = seller_performance['total_sales'].quantile(0.25)
-    q75_time = seller_performance['avg_processing_time'].quantile(0.75)
-    q25_time = seller_performance['avg_processing_time'].quantile(0.25)
+    # Add additional performance metrics
+    seller_performance['avg_order_value'] = seller_performance['total_sales'] / seller_performance['order_count']
+    seller_performance['shipping_ratio'] = seller_performance['shipping_costs'] / seller_performance['total_sales'] * 100
     
-    # Function to assign cluster
-    def assign_cluster(row):
-        if row['total_sales'] > q75_sales and row['avg_processing_time'] < q25_time:
-            return 0  # High performers
-        elif row['total_sales'] < q25_sales and row['avg_processing_time'] > q75_time:
-            return 2  # Low performers
+    # Calculate on-time delivery rate for each seller
+    seller_on_time = supply_chain.groupby('seller_id')['on_time_delivery'].mean().reset_index()
+    seller_on_time.columns = ['seller_id', 'on_time_delivery_rate']
+    seller_performance = seller_performance.merge(seller_on_time, on='seller_id', how='left')
+    
+    # Add on-time delivery rate and convert to percentage
+    seller_performance['on_time_delivery_rate'] = seller_performance['on_time_delivery_rate'].fillna(0.5) * 100
+    
+    # Calculate seller score - higher is better
+    seller_performance['seller_score'] = (
+        # Normalized order count (more is better)
+        (seller_performance['order_count'] / seller_performance['order_count'].max()) * 25 +
+        # Normalized avg order value (higher is better)
+        (seller_performance['avg_order_value'] / seller_performance['avg_order_value'].max()) * 25 +
+        # Normalized processing time (lower is better)
+        (1 - (seller_performance['avg_processing_time'] / seller_performance['avg_processing_time'].max())) * 25 +
+        # Normalized on-time delivery (higher is better)
+        (seller_performance['on_time_delivery_rate'] / 100) * 25
+    )
+    
+    # Perform improved clustering based on seller score
+    from sklearn.preprocessing import StandardScaler
+    from sklearn.cluster import KMeans
+    
+    # Select features for clustering
+    clustering_features = ['order_count', 'avg_processing_time', 'avg_delivery_days', 
+                          'total_sales', 'avg_order_value', 'on_time_delivery_rate']
+    
+    # Subset data for clustering
+    clustering_data = seller_performance[clustering_features].copy()
+    
+    # Handle missing values
+    for col in clustering_data.columns:
+        if clustering_data[col].isna().any():
+            clustering_data[col] = clustering_data[col].fillna(clustering_data[col].median())
+    
+    # Scale the data
+    scaler = StandardScaler()
+    scaled_data = scaler.fit_transform(clustering_data)
+    
+    # Determine the number of clusters using args
+    n_clusters = args.supplier_clusters
+    
+    # Perform k-means clustering
+    kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
+    seller_performance['prediction'] = kmeans.fit_predict(scaled_data)
+    
+    # Calculate cluster centers for interpretation
+    cluster_centers = pd.DataFrame(
+        scaler.inverse_transform(kmeans.cluster_centers_),
+        columns=clustering_features
+    )
+    
+    # Label the clusters based on seller score
+    cluster_avg_scores = seller_performance.groupby('prediction')['seller_score'].mean().sort_values(ascending=False)
+    cluster_to_performance = {}
+    
+    # Map clusters to performance labels (0: High, 1: Medium, 2: Low)
+    for i, (cluster, _) in enumerate(cluster_avg_scores.items()):
+        if i == 0:
+            cluster_to_performance[cluster] = 0  # High performers
+        elif i == 1:
+            cluster_to_performance[cluster] = 1  # Medium performers
         else:
-            return 1  # Average performers
+            cluster_to_performance[cluster] = 2  # Low performers
     
-    # Apply clustering
-    seller_performance['prediction'] = seller_performance.apply(assign_cluster, axis=1)
+    # Apply the mapping
+    seller_performance['performance_cluster'] = seller_performance['prediction'].map(cluster_to_performance)
+    
+    # Save cluster interpretation
+    cluster_interpretation = pd.DataFrame({
+        'original_cluster': list(cluster_to_performance.keys()),
+        'performance_level': [
+            'High Performer' if v == 0 else 'Medium Performer' if v == 1 else 'Low Performer'
+            for v in cluster_to_performance.values()
+        ],
+        'avg_score': [cluster_avg_scores[k] for k in cluster_to_performance.keys()]
+    })
+    
+    cluster_interpretation.to_csv(os.path.join(args.output_dir, 'cluster_interpretation.csv'), index=False)
     
     # Save seller performance data for the dashboard frontend
     seller_performance.to_csv(os.path.join(args.output_dir, 'seller_clusters.csv'), index=False)
+    cluster_centers.to_csv(os.path.join(args.output_dir, 'cluster_centers.csv'), index=False)
     
     # Generate geographical metrics
     print("Analyzing geographical patterns...")
@@ -243,10 +361,16 @@ def run_pandas_analysis(args):
         'order_id': 'count',
         'processing_time': 'mean',
         'delivery_days': 'mean',
-        'price': 'sum'
+        'price': 'sum',
+        'on_time_delivery': 'mean'
     }).reset_index()
 
-    state_metrics.columns = ['customer_state', 'order_count', 'avg_processing_time', 'avg_delivery_days', 'total_sales']
+    state_metrics.columns = ['customer_state', 'order_count', 'avg_processing_time', 
+                           'avg_delivery_days', 'total_sales', 'on_time_delivery_rate']
+    
+    # Convert on-time delivery rate to percentage
+    state_metrics['on_time_delivery_rate'] = state_metrics['on_time_delivery_rate'] * 100
+    
     state_metrics.to_csv(os.path.join(args.output_dir, 'state_metrics.csv'), index=False)
 
     # Generate top category by state
@@ -280,26 +404,62 @@ def run_pandas_analysis(args):
             cat_std = monthly_demand[monthly_demand['product_category_name'] == category]['count'].std()
             # Use coefficient of variation to determine safety factor
             cv = cat_std / cat_demand if cat_demand > 0 else 0.5
-            safety_factor = max(0.3, min(0.7, cv))  # Bound between 30-70%
             
-            safety_stock = cat_demand * safety_factor
+            # More sophisticated safety stock calculation based on service level
+            # Assuming 95% service level (Z=1.645 for normal distribution)
+            z_score = 1.645
             
-            # Calculate reorder point using actual lead time if available
-            # Here we use a simple approach with the delivery days as a proxy for lead time
+            # Calculate lead time factor
             category_delivery = supply_chain[supply_chain['product_category_name'] == category]['delivery_days'].mean()
             lead_time_days = category_delivery if not pd.isna(category_delivery) else 7  # Default to 7 days
             lead_time_fraction = lead_time_days / 30.0  # As fraction of month
+            
+            # Safety stock calculation with lead time consideration
+            safety_stock = z_score * cat_std * np.sqrt(lead_time_fraction)
+            
+            # Ensure safety stock isn't too small
+            safety_stock = max(safety_stock, 0.3 * cat_demand)
+            
+            # Calculate reorder point
             reorder_point = (cat_demand * lead_time_fraction) + safety_stock
             
             # Get next month forecast
             next_month_forecast = forecasts[category]['forecast'].iloc[0] if len(forecasts[category]) > 0 else cat_demand
             
+            # Determine growth rate
+            if cat_demand > 0:
+                growth_rate = ((next_month_forecast - cat_demand) / cat_demand) * 100
+            else:
+                growth_rate = 0
+            
+            # Calculate order frequency based on demand and inventory holding cost
+            # Assuming holding cost is 20% of item value annually
+            # Economic Order Quantity (EOQ) formula
+            annual_demand = cat_demand * 12
+            order_cost = 50  # Assumed fixed cost per order
+            holding_cost_pct = 0.2  # 20% annual holding cost
+            avg_item_cost = supply_chain[supply_chain['product_category_name'] == category]['price'].mean()
+            
+            if pd.notna(avg_item_cost) and avg_item_cost > 0 and annual_demand > 0:
+                holding_cost = avg_item_cost * holding_cost_pct
+                eoq = np.sqrt((2 * annual_demand * order_cost) / holding_cost)
+                order_frequency = annual_demand / eoq  # Orders per year
+                days_between_orders = 365 / order_frequency
+            else:
+                days_between_orders = 30  # Default monthly ordering
+            
             recommendations.append({
                 'product_category': category,
+                'category': category,  # Add alternative column name for compatibility
                 'avg_monthly_demand': cat_demand,
                 'safety_stock': safety_stock,
                 'reorder_point': reorder_point,
-                'next_month_forecast': next_month_forecast
+                'next_month_forecast': next_month_forecast,
+                'forecast_demand': next_month_forecast,  # Add alternative column name
+                'growth_rate': growth_rate,
+                'lead_time_days': lead_time_days,
+                'days_between_orders': days_between_orders,
+                'avg_item_cost': avg_item_cost
             })
     
     recommendations_df = pd.DataFrame(recommendations)
@@ -316,10 +476,10 @@ def run_pandas_analysis(args):
     )
     
     # Visualize demand trends
-    visualizer.visualize_demand_trends(monthly_demand, top_categories)
+    visualizer.visualize_demand_trends(monthly_demand, top_categories[:10])  # Limit to top 10 for readability
     
     # Create heatmaps for top categories
-    for category in top_categories[:3]:  # Limit to top 3
+    for category in top_categories[:5]:  # Limit to top 5
         visualizer.create_demand_heatmap(monthly_demand, category)
     
     # Visualize seller clusters
@@ -330,11 +490,37 @@ def run_pandas_analysis(args):
     
     # Create dashboard
     visualizer.create_supply_chain_dashboard(
-        monthly_demand[monthly_demand['product_category_name'].isin(top_categories)],
+        monthly_demand[monthly_demand['product_category_name'].isin(top_categories[:10])],
         seller_performance,
         forecasts,
         recommendations_df
     )
+    
+    # Create performance summary
+    performance_summary = pd.DataFrame({
+        'metric': [
+            'Total Orders',
+            'Total Products', 
+            'Total Sellers',
+            'Average Order Value',
+            'Average Processing Time',
+            'Average Delivery Days',
+            'On-Time Delivery Rate',
+            'Forecast Accuracy (Avg MAPE)'
+        ],
+        'value': [
+            len(orders),
+            len(products),
+            len(seller_performance),
+            f"${supply_chain['price'].mean():.2f}",
+            f"{supply_chain['processing_time'].mean():.2f} days",
+            f"{supply_chain['delivery_days'].mean():.2f} days",
+            f"{supply_chain['on_time_delivery'].mean() * 100:.2f}%",
+            f"{forecast_report['mape'].mean():.2f}%"
+        ]
+    })
+    
+    performance_summary.to_csv(os.path.join(args.output_dir, 'performance_summary.csv'), index=False)
     
     print(f"Analysis complete. Results saved to {args.output_dir}")
     return {
@@ -347,138 +533,6 @@ def run_pandas_analysis(args):
         'performance_metrics': performance_metrics  # Add overall performance metrics
     }
 
-def run_spark_analysis(args):
-    """
-    Run supply chain analysis using Apache Spark (for larger datasets)
-    
-    Args:
-        args: Command line arguments
-    """
-    print("Running analysis with Apache Spark...")
-    
-    # Create Spark session
-    spark = create_spark_session()
-    
-    try:
-        # Load data
-        print("Loading data...")
-        orders, order_items, customers, products, payments = load_ecommerce_data(spark, args.data_dir)
-        
-        # Process orders - NOTE: You'll need to modify the process_orders function
-        # in spark_implementation.py to use the new delivery days calculation logic
-        print("Processing orders...")
-        processed_orders = process_orders(orders)
-        
-        # Build unified dataset
-        print("Building unified dataset...")
-        supply_chain = build_unified_supply_chain_dataset(
-            processed_orders, order_items, products, customers, payments
-        )
-        
-        # Create output directory
-        ensure_directory(args.output_dir)
-        
-        # Analyze demand patterns
-        print("Analyzing demand patterns...")
-        demand_by_category, top_categories, demand_growth = analyze_product_demand(supply_chain)
-        
-        # Convert to pandas for forecasting (statsmodels doesn't work with Spark DataFrames)
-        demand_pandas = demand_by_category.toPandas()
-        demand_pandas.to_csv(os.path.join(args.output_dir, 'demand_by_category.csv'), index=False)
-        
-        # Get top category names
-        top_categories_list = [row['product_category_name'] for row in top_categories.limit(args.top_n).collect()]
-        
-        # Run time series forecasting
-        print("Running time series forecasting...")
-        forecaster = DemandForecaster(os.path.join(args.output_dir, 'demand_by_category.csv'))
-        forecaster.preprocess_data()
-        forecasts = forecaster.run_all_forecasts(top_n=args.top_n, periods=args.forecast_periods)
-        
-        # Generate forecast report
-        forecast_report = forecaster.generate_forecast_report(os.path.join(args.output_dir, 'forecast_report.csv'))
-        
-        # Analyze seller efficiency
-        print("Analyzing seller efficiency...")
-        seller_metrics, seller_clusters, cluster_centers, performance_ranking = analyze_seller_efficiency(supply_chain)
-        
-        # Save results
-        seller_metrics.toPandas().to_csv(os.path.join(args.output_dir, 'seller_metrics.csv'), index=False)
-        seller_clusters.to_csv(os.path.join(args.output_dir, 'seller_clusters.csv'), index=False)
-        
-        # Analyze geographical patterns
-        print("Analyzing geographical patterns...")
-        state_metrics, top_category_by_state = analyze_geographical_patterns(supply_chain)
-        
-        # Save results
-        state_metrics.toPandas().to_csv(os.path.join(args.output_dir, 'state_metrics.csv'), index=False)
-        top_category_by_state.toPandas().to_csv(os.path.join(args.output_dir, 'top_category_by_state.csv'), index=False)
-        
-        # Calculate supply chain metrics
-        print("Calculating supply chain performance metrics...")
-        metrics = analyze_supply_chain_metrics(supply_chain)
-        
-        # Generate recommendations
-        print("Generating supply chain recommendations...")
-        recommendations = generate_supply_chain_recommendations(
-            (demand_by_category, top_categories, demand_growth),
-            (seller_metrics, seller_clusters, cluster_centers),
-            metrics
-        )
-        
-        # Save recommendations
-        for key, df in recommendations.items():
-            df.to_csv(os.path.join(args.output_dir, f'{key}.csv'), index=False)
-        
-        # Create visualizations
-        print("Creating visualizations...")
-        visualizer = SupplyChainVisualizer(output_dir=args.output_dir)
-        
-        # Generate date field for visualization
-        demand_pandas['date'] = pd.to_datetime(
-            demand_pandas['year'].astype(str) + '-' + 
-            demand_pandas['month'].astype(str).str.zfill(2) + '-01'
-        )
-        
-        # Visualize demand trends
-        visualizer.visualize_demand_trends(demand_pandas, top_categories_list)
-        
-        # Create heatmaps for top categories
-        for category in top_categories_list[:3]:  # Limit to top 3
-            visualizer.create_demand_heatmap(demand_pandas, category)
-        
-        # Visualize seller clusters
-        visualizer.visualize_seller_clusters(seller_clusters)
-        
-        # Visualize recommendations
-        visualizer.visualize_reorder_recommendations(recommendations['inventory_recommendations'])
-        
-        # Create dashboard (if we have all required data)
-        if 'inventory_recommendations' in recommendations:
-            visualizer.create_supply_chain_dashboard(
-                demand_pandas[demand_pandas['product_category_name'].isin(top_categories_list)],
-                seller_clusters,
-                forecasts,
-                recommendations['inventory_recommendations']
-            )
-        
-        print(f"Analysis complete. Results saved to {args.output_dir}")
-        
-        # Return results (mainly for testing)
-        return {
-            'demand_by_category': demand_pandas,
-            'top_categories': top_categories_list,
-            'forecasts': forecasts,
-            'seller_performance': seller_clusters,
-            'recommendations': recommendations,
-            'metrics': metrics
-        }
-        
-    finally:
-        # Stop Spark session
-        spark.stop()
-        print("Spark session stopped")
-
 def main():
     """Main function"""
     # Parse arguments
@@ -490,11 +544,8 @@ def main():
     # Create output directory
     ensure_directory(args.output_dir)
     
-    # Run appropriate analysis based on arguments
-    if args.use_spark:
-        results = run_spark_analysis(args)
-    else:
-        results = run_pandas_analysis(args)
+    # Run pandas analysis
+    results = run_pandas_analysis(args)
     
     # Generate summary report
     print("Generating summary report...")
@@ -513,14 +564,14 @@ def main():
     
     # Add top categories
     report.append("#### Top Product Categories by Demand")
-    for i, category in enumerate(results['top_categories'][:5], 1):
+    for i, category in enumerate(results['top_categories'][:10], 1):
         report.append(f"{i}. {category}")
     
     report.append("")
     
     # Add forecast summaries
     report.append("#### Demand Forecast Highlights")
-    for category, forecast in list(results['forecasts'].items())[:3]:  # Top 3 forecasts
+    for category, forecast in list(results['forecasts'].items())[:5]:  # Top 5 forecasts
         avg_forecast = forecast['forecast'].mean()
         report.append(f"- {category}: Avg. forecasted demand {avg_forecast:.1f} units/month")
     
@@ -528,15 +579,10 @@ def main():
     
     # Add reorder recommendations summary
     report.append("#### Inventory Recommendations")
-    if isinstance(results['recommendations'], dict) and 'inventory_recommendations' in results['recommendations']:
-        # For Spark analysis
-        recos = results['recommendations']['inventory_recommendations']
-        for _, row in recos.head(3).iterrows():
-            report.append(f"- {row['category']}: {row['recommendation']} (Priority: {row['priority']})")
-    else:
+    if isinstance(results['recommendations'], pd.DataFrame):
         # For pandas analysis
         recos = results['recommendations']
-        for _, row in recos.head(3).iterrows():
+        for _, row in recos.head(5).iterrows():
             report.append(f"- {row['product_category']}: Reorder at {row['reorder_point']:.1f} units, Safety stock: {row['safety_stock']:.1f} units")
     
     report.append("")
@@ -556,11 +602,31 @@ def main():
         
         report.append("")
     
+    # Add seller performance insights
+    report.append("#### Seller Performance Insights")
+    seller_clusters = results['seller_performance'].groupby('prediction').size().reset_index()
+    seller_clusters.columns = ['cluster', 'count']
+    
+    total_sellers = seller_clusters['count'].sum()
+    
+    for _, row in seller_clusters.iterrows():
+        cluster_num = row['cluster']
+        cluster_size = row['count']
+        percentage = (cluster_size / total_sellers) * 100
+        
+        cluster_label = "High Performers" if cluster_num == 0 else \
+                       "Medium Performers" if cluster_num == 1 else \
+                       "Low Performers"
+        
+        report.append(f"- {cluster_label}: {cluster_size} sellers ({percentage:.1f}%)")
+    
+    report.append("")
+    
     report.append("### Visualization Files")
     
     # List output files
     output_files = [f for f in os.listdir(args.output_dir) if f.endswith('.png') or f.endswith('.csv')]
-    for f in output_files[:10]:  # Limit to first 10 files
+    for f in output_files[:15]:  # Limit to first 15 files
         report.append(f"- {f}")
     
     # Write report to file

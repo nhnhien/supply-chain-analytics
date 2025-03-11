@@ -138,12 +138,48 @@ class SupplyChainVisualizer:
         Args:
             seller_data: DataFrame with seller clustering results
         """
+        print("Visualizing seller clusters with data shape:", seller_data.shape)
+        
+        # Check if dataframe is empty
+        if seller_data.empty:
+            print("Warning: Empty seller_data dataframe. Cannot generate visualization.")
+            return
+        
         # Check for required columns
-        required_cols = ['total_sales', 'avg_processing_time', 'products_sold', 'prediction']
-        for col in required_cols:
-            if col not in seller_data.columns:
-                print(f"Missing required column: {col}")
-                return
+        required_cols = ['total_sales', 'avg_processing_time', 'prediction']
+        missing_cols = [col for col in required_cols if col not in seller_data.columns]
+        
+        if missing_cols:
+            print(f"Warning: Missing columns in seller_data dataframe: {missing_cols}")
+            # Try to find alternative columns or generate defaults
+            if 'total_sales' not in seller_data.columns and 'price' in seller_data.columns:
+                seller_data['total_sales'] = seller_data['price']
+                print("Using 'price' as 'total_sales'")
+            elif 'total_sales' not in seller_data.columns:
+                seller_data['total_sales'] = 1000  # Default value
+                print("Using default value for total_sales")
+                
+            if 'avg_processing_time' not in seller_data.columns and 'processing_time' in seller_data.columns:
+                seller_data['avg_processing_time'] = seller_data['processing_time']
+                print("Using 'processing_time' as 'avg_processing_time'")
+            elif 'avg_processing_time' not in seller_data.columns:
+                seller_data['avg_processing_time'] = 2.0  # Default value
+                print("Using default value for avg_processing_time")
+                
+            if 'prediction' not in seller_data.columns:
+                # Assign clusters randomly for visualization
+                seller_data['prediction'] = np.random.randint(0, 3, size=len(seller_data))
+                print("Assigning random clusters for visualization")
+        
+        # Add products_sold column if it doesn't exist
+        if 'products_sold' not in seller_data.columns:
+            if 'order_count' in seller_data.columns:
+                seller_data['products_sold'] = seller_data['order_count']
+                print("Using 'order_count' as 'products_sold'")
+            else:
+                # Add a default value for bubble size
+                seller_data['products_sold'] = 50
+                print("Using default value for products_sold")
         
         plt.figure(figsize=(12, 10))
         
@@ -154,12 +190,17 @@ class SupplyChainVisualizer:
         max_sales = seller_data['total_sales'].max()
         max_time = seller_data['avg_processing_time'].max()
         
+        if max_sales == 0:
+            max_sales = 1.0  # Avoid division by zero
+        if max_time == 0:
+            max_time = 1.0  # Avoid division by zero
+        
         # Plot clusters
         for cluster in sorted(seller_data['prediction'].unique()):
             cluster_data = seller_data[seller_data['prediction'] == cluster]
             
             # Size points by number of products sold
-            sizes = 20 + (cluster_data['products_sold'] / cluster_data['products_sold'].max() * 100)
+            sizes = 20 + (cluster_data['products_sold'] / cluster_data['products_sold'].max() * 100) if cluster_data['products_sold'].max() > 0 else 50
             
             plt.scatter(
                 cluster_data['total_sales'] / max_sales,  # Normalize
@@ -179,13 +220,13 @@ class SupplyChainVisualizer:
         
         # Add text description of clusters
         plt.figtext(0.01, 0.01, 
-                   "Lower processing time and higher sales indicate better performance",
-                   fontsize=10)
+                "Lower processing time and higher sales indicate better performance",
+                fontsize=10)
         
         plt.tight_layout()
         plt.savefig(f"{self.output_dir}/seller_clusters.png", dpi=300)
         plt.close()
-        
+    # Modify the visualize_reorder_recommendations function in visualization_module.py
     def visualize_reorder_recommendations(self, recommendations, title="Inventory Recommendations"):
         """
         Visualize inventory reorder recommendations
@@ -193,8 +234,62 @@ class SupplyChainVisualizer:
         Args:
             recommendations: DataFrame with reorder recommendations
         """
-        print(recommendations.columns)
-        print(recommendations.head())
+        print("Columns in recommendations dataframe:", recommendations.columns)
+        
+        # Check if dataframe is empty
+        if recommendations.empty:
+            print("Warning: Empty recommendations dataframe. Cannot generate visualization.")
+            return
+            
+        # Ensure required columns exist
+        required_cols = ['product_category', 'reorder_point', 'safety_stock']
+        missing_cols = [col for col in required_cols if col not in recommendations.columns]
+        
+        if missing_cols:
+            print(f"Warning: Missing columns in recommendations dataframe: {missing_cols}")
+            # Try to use alternative column names if available
+            column_alternatives = {
+                'product_category': ['category', 'product_category_name'],
+                'reorder_point': ['reorder_level', 'reorder_threshold'],
+                'safety_stock': ['buffer_stock', 'min_stock']
+            }
+            
+            for missing_col in missing_cols:
+                alternatives = column_alternatives.get(missing_col, [])
+                for alt_col in alternatives:
+                    if alt_col in recommendations.columns:
+                        # Rename alternative column to expected name
+                        recommendations[missing_col] = recommendations[alt_col]
+                        print(f"Using '{alt_col}' as '{missing_col}'")
+                        break
+        
+        # If we still don't have required columns, create them with sensible defaults
+        if 'product_category' not in recommendations.columns and 'category' in recommendations.columns:
+            recommendations['product_category'] = recommendations['category']
+        elif 'product_category' not in recommendations.columns:
+            recommendations['product_category'] = "Unknown Category"
+            
+        if 'reorder_point' not in recommendations.columns:
+            if 'avg_monthly_demand' in recommendations.columns:
+                # Estimate reorder point as 1.5x avg demand
+                recommendations['reorder_point'] = recommendations['avg_monthly_demand'] * 1.5
+                print("Estimating reorder_point from avg_monthly_demand")
+            else:
+                # Assign a default value
+                recommendations['reorder_point'] = 100
+                print("Using default value for reorder_point")
+        
+        if 'safety_stock' not in recommendations.columns:
+            if 'avg_monthly_demand' in recommendations.columns:
+                # Estimate safety stock as 30% of avg demand
+                recommendations['safety_stock'] = recommendations['avg_monthly_demand'] * 0.3
+                print("Estimating safety_stock from avg_monthly_demand")
+            else:
+                # Assign a default value
+                recommendations['safety_stock'] = 30
+                print("Using default value for safety_stock")
+        
+        # Now proceed with sorting and visualization
         # Sort by reorder point (descending)
         sorted_recs = recommendations.sort_values('reorder_point', ascending=False)
         
@@ -212,16 +307,19 @@ class SupplyChainVisualizer:
         
         # Plot lead time demand (difference between reorder point and safety stock)
         plt.bar(x, 
-               sorted_recs['reorder_point'] - sorted_recs['safety_stock'], 
-               width, 
-               bottom=sorted_recs['safety_stock'], 
-               label='Lead Time Demand', 
-               color='#ff7f0e')
+            sorted_recs['reorder_point'] - sorted_recs['safety_stock'], 
+            width, 
+            bottom=sorted_recs['safety_stock'], 
+            label='Lead Time Demand', 
+            color='#ff7f0e')
         
-        # Plot next month forecast as a line
+        # Plot next month forecast as a line if available
         if 'next_month_forecast' in sorted_recs.columns:
             plt.plot(x, sorted_recs['next_month_forecast'], 'ro-', 
                     linewidth=2, markersize=8, label='Next Month Forecast')
+        elif 'forecast_demand' in sorted_recs.columns:
+            plt.plot(x, sorted_recs['forecast_demand'], 'ro-', 
+                    linewidth=2, markersize=8, label='Forecast Demand')
         
         # Add labels and title
         plt.title(title, fontsize=16)
@@ -237,7 +335,6 @@ class SupplyChainVisualizer:
         plt.tight_layout()
         plt.savefig(f"{self.output_dir}/reorder_recommendations.png", dpi=300)
         plt.close()
-        
     def visualize_forecast_accuracy(self, performance_data, title="Forecast Model Performance"):
         """
         Visualize forecast model performance metrics

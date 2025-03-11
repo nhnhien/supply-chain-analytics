@@ -66,7 +66,8 @@ async function loadCsvData(filePath, mockDataGenerator) {
                 'growth_rate', 'mape', 'rmse', 'mae', 'order_count', 'count',
                 'avg_processing_time', 'avg_delivery_days', 'total_sales',
                 'safety_stock', 'reorder_point', 'next_month_forecast',
-                'on_time_delivery', 'perfect_order_rate', 'inventory_turnover'
+                'on_time_delivery', 'perfect_order_rate', 'inventory_turnover',
+                'lead_time_days', 'days_between_orders', 'avg_item_cost'
               ];
               
               for (const field of numericFields) {
@@ -193,7 +194,9 @@ function createMockForecastReport() {
                     category === "Clothing" ? "(2,1,1)" :
                     category === "Books" ? "(1,1,1)" :
                     "(2,1,0)", // Home Goods
-      forecast_values: forecastValues
+      forecast_values: forecastValues,
+      data_quality: category === "Books" ? "Limited" : "Sufficient",
+      has_visualization: true
     };
   });
 }
@@ -306,20 +309,23 @@ function createMockSellerClusters() {
     const cluster = clusters[Math.floor(Math.random() * clusters.length)];
     
     // Characteristics based on cluster
-    let processingTime, deliveryDays, totalSales;
+    let processingTime, deliveryDays, totalSales, onTimeRate;
     
     if (cluster === 0) { // High performers
       processingTime = 1 + Math.random() * 1.5;
       deliveryDays = 3 + Math.random() * 2;
       totalSales = 25000 + Math.random() * 75000;
+      onTimeRate = 95 + Math.random() * 5;
     } else if (cluster === 1) { // Medium performers
       processingTime = 2.5 + Math.random() * 2;
       deliveryDays = 5 + Math.random() * 2;
       totalSales = 10000 + Math.random() * 20000;
+      onTimeRate = 80 + Math.random() * 15;
     } else { // Low performers
       processingTime = 4 + Math.random() * 3;
       deliveryDays = 7 + Math.random() * 4;
       totalSales = 2000 + Math.random() * 8000;
+      onTimeRate = 60 + Math.random() * 20;
     }
     
     sellers.push({
@@ -328,7 +334,10 @@ function createMockSellerClusters() {
       avg_processing_time: processingTime,
       avg_delivery_days: deliveryDays,
       total_sales: totalSales,
-      prediction: cluster
+      prediction: cluster,
+      on_time_delivery_rate: onTimeRate,
+      shipping_costs: totalSales * (0.05 + Math.random() * 0.1),
+      avg_order_value: totalSales / Math.floor(totalSales / (50 + Math.random() * 100))
     });
   }
   
@@ -336,7 +345,7 @@ function createMockSellerClusters() {
 }
 
 /**
- * Generate mock reorder recommendations data
+ * Generate mock reorder recommendations data with enhanced supply chain metrics
  * @returns {Array} - Mock reorder recommendations data
  */
 function createMockReorderRecommendations() {
@@ -381,13 +390,36 @@ function createMockReorderRecommendations() {
                       
     const nextMonthForecast = Math.round(baseValue * (1 + growthRate));
     
+    // Calculate average item cost
+    const avgItemCost = category === "Electronics" ? 150 : 
+                       category === "Furniture" ? 350 :
+                       category === "Clothing" ? 45 :
+                       category === "Books" ? 18 :
+                       30; // Home Goods
+    
+    // Calculate days between orders (order frequency)
+    const annualDemand = baseValue * 12;
+    const orderCost = 50; // Fixed cost per order
+    const holdingCostPct = 0.2; // 20% annual holding cost
+    const holdingCost = avgItemCost * holdingCostPct;
+    
+    // Economic Order Quantity formula
+    const eoq = Math.sqrt((2 * annualDemand * orderCost) / holdingCost);
+    const orderFrequency = annualDemand / eoq; // Orders per year
+    const daysBetweenOrders = Math.round(365 / orderFrequency);
+    
     return {
       product_category: category,
+      category: category,
       avg_monthly_demand: baseValue,
       safety_stock: safetyStock,
       reorder_point: reorderPoint,
       next_month_forecast: nextMonthForecast,
-      growth_rate: growthRate * 100 // Convert to percentage
+      forecast_demand: nextMonthForecast,
+      growth_rate: growthRate * 100, // Convert to percentage
+      lead_time_days: leadTime,
+      days_between_orders: daysBetweenOrders,
+      avg_item_cost: avgItemCost
     };
   });
 }
@@ -403,7 +435,7 @@ function createMockStateMetrics() {
   
   return states.map(state => {
     // States have different characteristics
-    let orderMultiplier, processingTimeModifier, deliveryDaysModifier, salesModifier;
+    let orderMultiplier, processingTimeModifier, deliveryDaysModifier, salesModifier, onTimeRateModifier;
     
     // Set state-specific modifiers
     switch(state) {
@@ -412,24 +444,28 @@ function createMockStateMetrics() {
         processingTimeModifier = 0.9;
         deliveryDaysModifier = 1.0;
         salesModifier = 1.4;
+        onTimeRateModifier = 1.05;
         break;
       case "TX":
         orderMultiplier = 1.3;
         processingTimeModifier = 0.95;
         deliveryDaysModifier = 0.9;
         salesModifier = 1.2;
+        onTimeRateModifier = 1.02;
         break;
       case "NY":
         orderMultiplier = 1.4;
         processingTimeModifier = 1.1;
         deliveryDaysModifier = 1.1;
         salesModifier = 1.5;
+        onTimeRateModifier = 0.98;
         break;
       case "FL":
         orderMultiplier = 1.2;
         processingTimeModifier = 1.0;
         deliveryDaysModifier = 0.95;
         salesModifier = 1.1;
+        onTimeRateModifier = 1.0;
         break;
       default:
         // Random modifiers for other states
@@ -437,6 +473,7 @@ function createMockStateMetrics() {
         processingTimeModifier = 0.9 + Math.random() * 0.3;
         deliveryDaysModifier = 0.9 + Math.random() * 0.3;
         salesModifier = 0.8 + Math.random() * 0.4;
+        onTimeRateModifier = 0.95 + Math.random() * 0.1;
     }
     
     // Calculate metrics with state modifiers
@@ -445,15 +482,54 @@ function createMockStateMetrics() {
     const avgProcessingTime = (2 + Math.random()) * processingTimeModifier;
     const avgDeliveryDays = (5 + Math.random() * 2) * deliveryDaysModifier;
     const totalSales = (50000 + Math.random() * 50000) * salesModifier;
+    const onTimeRate = (85 + Math.random() * 10) * onTimeRateModifier;
     
     return {
       customer_state: state,
       order_count: orderCount,
       avg_processing_time: avgProcessingTime,
       avg_delivery_days: avgDeliveryDays,
-      total_sales: totalSales
+      total_sales: totalSales,
+      on_time_delivery_rate: Math.min(100, onTimeRate)
     };
   });
+}
+
+/**
+ * Get top categories by total demand from monthly demand data
+ * @param {Array} data - Monthly demand data
+ * @param {Number} limit - Maximum number of categories to return
+ * @returns {Array} - Array of category names sorted by total demand
+ */
+function getTopCategories(data, limit = 15) {
+  if (!Array.isArray(data)) {
+    console.warn('getTopCategories received non-array data');
+    return [];
+  }
+  
+  // Group by category and sum the demand
+  const categoryTotals = {};
+  
+  data.forEach(row => {
+    if (!row) return;
+    
+    const category = row.product_category_name;
+    const count = parseFloat(row.count || row.order_count || 0);
+    
+    if (category && !categoryTotals[category]) {
+      categoryTotals[category] = 0;
+    }
+    
+    if (category) {
+      categoryTotals[category] += isNaN(count) ? 0 : count;
+    }
+  });
+  
+  // Sort categories by total demand (not alphabetically) and get top N
+  return Object.entries(categoryTotals)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, limit)
+    .map(entry => entry[0]);
 }
 
 /**
@@ -468,23 +544,25 @@ export async function loadDashboardData() {
       forecastReport,
       sellerClusters,
       reorderRecommendations,
-      stateMetrics
+      stateMetrics,
+      performanceSummary
     ] = await Promise.all([
       loadCsvData('/data/monthly_demand.csv', createMockMonthlyDemand),
       loadCsvData('/data/forecast_report.csv', createMockForecastReport),
       loadCsvData('/data/seller_clusters.csv', createMockSellerClusters),
       loadCsvData('/data/reorder_recommendations.csv', createMockReorderRecommendations),
-      loadCsvData('/data/state_metrics.csv', createMockStateMetrics)
+      loadCsvData('/data/state_metrics.csv', createMockStateMetrics),
+      loadCsvData('/data/performance_summary.csv', () => [])
     ]);
     
     // Process monthly demand data for time series
     const processedDemand = processDemandData(monthlyDemand);
     
-    // Get top categories from the demand data
+    // Get top categories by demand volume, not alphabetically
     const topCategories = getTopCategories(monthlyDemand);
     
     // Calculate KPIs (now returns directly without API fetch which was causing 404)
-    const kpis = calculateKPIsDirectly(monthlyDemand, sellerClusters, forecastReport);
+    const kpis = calculateKPIsDirectly(monthlyDemand, sellerClusters, forecastReport, performanceSummary);
     
     // Get top category by state data if available
     let topCategoryByState = [];
@@ -492,6 +570,14 @@ export async function loadDashboardData() {
       topCategoryByState = await loadCsvData('/data/top_category_by_state.csv', () => []);
     } catch (error) {
       console.warn('Could not load top category by state data');
+    }
+    
+    // Load cluster interpretation if available
+    let clusterInterpretation = [];
+    try {
+      clusterInterpretation = await loadCsvData('/data/cluster_interpretation.csv', () => []);
+    } catch (error) {
+      console.warn('Could not load cluster interpretation data');
     }
     
     return {
@@ -506,7 +592,8 @@ export async function loadDashboardData() {
       },
       sellerPerformance: {
         clusters: sellerClusters,
-        metrics: extractSellerMetrics(sellerClusters)
+        metrics: extractSellerMetrics(sellerClusters),
+        interpretation: clusterInterpretation
       },
       geography: {
         stateMetrics: stateMetrics,
@@ -515,7 +602,8 @@ export async function loadDashboardData() {
       recommendations: {
         inventory: reorderRecommendations
       },
-      kpis: kpis
+      kpis: kpis,
+      performance: performanceSummary
     };
   } catch (error) {
     console.error("Error loading dashboard data:", error);
@@ -547,7 +635,7 @@ export async function loadDashboardData() {
       recommendations: {
         inventory: createMockReorderRecommendations()
       },
-      kpis: calculateKPIsDirectly(mockMonthlyDemand, mockSellerClusters, mockForecastReport)
+      kpis: calculateKPIsDirectly(mockMonthlyDemand, mockSellerClusters, mockForecastReport, [])
     };
   }
 }
@@ -590,43 +678,6 @@ function processDemandData(data) {
   }).filter(row => row !== null);
   
   return processedData;
-}
-
-/**
- * Get top categories by total demand
- * @param {Array} data - Monthly demand data
- * @param {number} limit - Maximum number of categories to return
- * @returns {Array} - Array of top category names
- */
-function getTopCategories(data, limit = 5) {
-  if (!Array.isArray(data)) {
-    console.warn('getTopCategories received non-array data');
-    return [];
-  }
-  
-  // Group by category and sum the demand
-  const categoryTotals = {};
-  
-  data.forEach(row => {
-    if (!row) return;
-    
-    const category = row.product_category_name;
-    const count = parseFloat(row.count || row.order_count || 0);
-    
-    if (category && !categoryTotals[category]) {
-      categoryTotals[category] = 0;
-    }
-    
-    if (category) {
-      categoryTotals[category] += isNaN(count) ? 0 : count;
-    }
-  });
-  
-  // Sort categories by total demand and get top N
-  return Object.entries(categoryTotals)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, limit)
-    .map(entry => entry[0]);
 }
 
 /**
@@ -675,12 +726,13 @@ function extractForecastPerformance(forecastReport) {
     mape: parseFloat(row.mape) || null,
     rmse: parseFloat(row.rmse) || null,
     mae: parseFloat(row.mae) || null,
-    growth_rate: parseFloat(row.growth_rate) || 0
+    growth_rate: parseFloat(row.growth_rate) || 0,
+    data_quality: row.data_quality || 'Unknown'
   }));
 }
 
 /**
- * Extract seller performance metrics
+ * Extract seller performance metrics with enhanced metrics
  * @param {Array} sellerClusters - Seller cluster data
  * @returns {Object} - Object with seller metrics
  */
@@ -706,7 +758,10 @@ function extractSellerMetrics(sellerClusters) {
         total_sales: 0,
         avg_processing_time: 0,
         avg_delivery_days: 0,
-        order_count: 0
+        order_count: 0,
+        on_time_delivery_rate: 0,
+        shipping_costs: 0,
+        avg_order_value: 0
       };
     }
     
@@ -715,6 +770,9 @@ function extractSellerMetrics(sellerClusters) {
     clusterMetrics[cluster].avg_processing_time += parseFloat(seller.avg_processing_time) || 0;
     clusterMetrics[cluster].avg_delivery_days += parseFloat(seller.avg_delivery_days) || 0;
     clusterMetrics[cluster].order_count += parseFloat(seller.order_count) || 0;
+    clusterMetrics[cluster].on_time_delivery_rate += parseFloat(seller.on_time_delivery_rate) || 0;
+    clusterMetrics[cluster].shipping_costs += parseFloat(seller.shipping_costs) || 0;
+    clusterMetrics[cluster].avg_order_value += parseFloat(seller.avg_order_value) || 0;
   });
   
   // Calculate averages
@@ -725,7 +783,27 @@ function extractSellerMetrics(sellerClusters) {
       metrics.avg_processing_time = metrics.avg_processing_time / metrics.count;
       metrics.avg_delivery_days = metrics.avg_delivery_days / metrics.count;
       metrics.avg_order_count = metrics.order_count / metrics.count;
+      metrics.avg_on_time_rate = metrics.on_time_delivery_rate / metrics.count;
+      metrics.avg_shipping_costs = metrics.shipping_costs / metrics.count;
+      metrics.avg_order_value = metrics.avg_order_value / metrics.count;
     }
+  });
+  
+  // Calculate cluster performance score
+  Object.keys(clusterMetrics).forEach(cluster => {
+    const metrics = clusterMetrics[cluster];
+    
+    // Higher score is better
+    metrics.performance_score = (
+      // Normalized order count (more is better)
+      (metrics.avg_order_count / Math.max(...Object.values(clusterMetrics).map(m => m.avg_order_count || 1))) * 25 +
+      // Normalized avg sales (higher is better)
+      (metrics.avg_sales / Math.max(...Object.values(clusterMetrics).map(m => m.avg_sales || 1))) * 25 +
+      // Normalized processing time (lower is better)
+      (1 - (metrics.avg_processing_time / Math.max(...Object.values(clusterMetrics).map(m => m.avg_processing_time || 1)))) * 25 +
+      // Normalized on-time delivery (higher is better)
+      (metrics.avg_on_time_rate / 100) * 25
+    );
   });
   
   return {
@@ -739,9 +817,60 @@ function extractSellerMetrics(sellerClusters) {
  * @param {Array} demandData - Monthly demand data
  * @param {Array} sellerData - Seller performance data
  * @param {Array} forecastData - Forecast data
+ * @param {Array} performanceSummary - Performance summary data
  * @returns {Object} - Object with calculated KPIs
  */
-function calculateKPIsDirectly(demandData, sellerData, forecastData) {
+function calculateKPIsDirectly(demandData, sellerData, forecastData, performanceSummary) {
+  // If we have performance summary data, use that first
+  if (Array.isArray(performanceSummary) && performanceSummary.length > 0) {
+    const summaryKPIs = {};
+    
+    performanceSummary.forEach(row => {
+      if (!row || !row.metric || !row.value) return;
+      
+      // Parse the summary value
+      let value = row.value;
+      if (typeof value === 'string') {
+        // Remove currency symbol and convert to number if possible
+        if (value.startsWith('$')) {
+          value = parseFloat(value.substring(1).replace(/,/g, ''));
+        }
+        // Remove % and convert to number if possible
+        else if (value.endsWith('%')) {
+          value = parseFloat(value.substring(0, value.length - 1));
+        }
+        // Try to convert other numeric strings
+        else if (!isNaN(parseFloat(value))) {
+          value = parseFloat(value);
+        }
+      }
+      
+      // Map metrics to KPI fields
+      if (row.metric === 'Average Processing Time') {
+        summaryKPIs.avg_processing_time = value;
+      } else if (row.metric === 'Average Delivery Days') {
+        summaryKPIs.avg_delivery_days = value;
+      } else if (row.metric === 'On-Time Delivery Rate') {
+        summaryKPIs.on_time_delivery = value;
+      } else if (row.metric === 'Total Orders') {
+        summaryKPIs.total_orders = value;
+      } else if (row.metric === 'Total Products') {
+        summaryKPIs.total_products = value;
+      } else if (row.metric === 'Average Order Value') {
+        summaryKPIs.average_order_value = value;
+      } else if (row.metric === 'Forecast Accuracy (Avg MAPE)') {
+        summaryKPIs.forecast_accuracy = value;
+      }
+    });
+    
+    // If we have comprehensive KPIs from the summary, return them
+    if (Object.keys(summaryKPIs).length >= 3) {
+      return summaryKPIs;
+    }
+  }
+  
+  // Calculate KPIs from raw data if performance summary isn't available
+  
   // Average processing time
   let totalProcessingTime = 0;
   let sellerCount = 0;
@@ -794,23 +923,21 @@ function calculateKPIsDirectly(demandData, sellerData, forecastData) {
   
   // Calculate on-time delivery from seller data if available
   let onTimeDelivery = 85.0; // Default to industry benchmark
+  let onTimeCount = 0;
   
-  if (Array.isArray(sellerData) && sellerData.some(seller => seller && seller.on_time_delivery !== undefined)) {
-    let totalOnTime = 0;
-    let onTimeCount = 0;
-    
+  if (Array.isArray(sellerData)) {
     sellerData.forEach(seller => {
-      if (seller && seller.on_time_delivery !== undefined) {
-        const onTime = parseFloat(seller.on_time_delivery);
-        if (!isNaN(onTime)) {
-          totalOnTime += onTime;
+      if (seller && seller.on_time_delivery_rate !== undefined) {
+        const onTimeRate = parseFloat(seller.on_time_delivery_rate);
+        if (!isNaN(onTimeRate)) {
+          onTimeDelivery += onTimeRate;
           onTimeCount++;
         }
       }
     });
     
     if (onTimeCount > 0) {
-      onTimeDelivery = totalOnTime / onTimeCount;
+      onTimeDelivery = onTimeDelivery / onTimeCount;
     }
   }
   
@@ -820,6 +947,30 @@ function calculateKPIsDirectly(demandData, sellerData, forecastData) {
   // Inventory turnover - industry benchmark for e-commerce
   const inventoryTurnover = 8.0;
   
+  // Calculate average order value if available
+  let avgOrderValue = 0;
+  if (Array.isArray(sellerData) && sellerData.length > 0) {
+    const totalSales = sellerData.reduce((sum, seller) => sum + (parseFloat(seller.total_sales) || 0), 0);
+    const totalOrders = sellerData.reduce((sum, seller) => sum + (parseFloat(seller.order_count) || 0), 0);
+    
+    if (totalOrders > 0) {
+      avgOrderValue = totalSales / totalOrders;
+    }
+  }
+  
+  // Calculate forecast accuracy (inverse of MAPE)
+  let forecastAccuracy = 0;
+  if (Array.isArray(forecastData) && forecastData.length > 0) {
+    const totalMape = forecastData.reduce((sum, forecast) => {
+      const mape = parseFloat(forecast.mape || 0);
+      return sum + (isNaN(mape) ? 0 : mape);
+    }, 0);
+    
+    if (forecastData.length > 0) {
+      forecastAccuracy = 100 - Math.min(100, totalMape / forecastData.length);
+    }
+  }
+  
   // Return calculated KPIs
   return {
     avg_processing_time: avgProcessingTime,
@@ -828,6 +979,8 @@ function calculateKPIsDirectly(demandData, sellerData, forecastData) {
     on_time_delivery: onTimeDelivery,
     perfect_order_rate: perfectOrderRate,
     inventory_turnover: inventoryTurnover,
+    average_order_value: avgOrderValue,
+    forecast_accuracy: forecastAccuracy,
     // Flag estimated values for transparency in the UI
     estimated_fields: ['on_time_delivery', 'perfect_order_rate', 'inventory_turnover']
   };
@@ -909,13 +1062,53 @@ export async function fetchSellerDetails(sellerId) {
       
       // If not found in CSV, generate mock data for this specific seller
       console.warn(`No seller data found for ${sellerId}, generating mock data`);
+      
+      // Get random cluster (prefer high performers)
+      const clusterWeights = [0.2, 0.5, 0.3]; // 20% high, 50% medium, 30% low performers
+      const randomVal = Math.random();
+      let sellerCluster;
+      
+      if (randomVal < clusterWeights[0]) {
+        sellerCluster = 0; // High performer
+      } else if (randomVal < clusterWeights[0] + clusterWeights[1]) {
+        sellerCluster = 1; // Medium performer
+      } else {
+        sellerCluster = 2; // Low performer
+      }
+      
+      // Generate more realistic mock seller data based on cluster
+      let processingTime, deliveryDays, totalSales, onTimeRate, orderCount;
+      
+      if (sellerCluster === 0) { // High performers
+        processingTime = 1 + Math.random() * 1.5;
+        deliveryDays = 3 + Math.random() * 2;
+        orderCount = 100 + Math.random() * 200;
+        totalSales = orderCount * (200 + Math.random() * 200);
+        onTimeRate = 95 + Math.random() * 5;
+      } else if (sellerCluster === 1) { // Medium performers
+        processingTime = 2.5 + Math.random() * 2;
+        deliveryDays = 5 + Math.random() * 2;
+        orderCount = 50 + Math.random() * 100;
+        totalSales = orderCount * (150 + Math.random() * 150);
+        onTimeRate = 80 + Math.random() * 15;
+      } else { // Low performers
+        processingTime = 4 + Math.random() * 3;
+        deliveryDays = 7 + Math.random() * 4;
+        orderCount = 10 + Math.random() * 40;
+        totalSales = orderCount * (100 + Math.random() * 100);
+        onTimeRate = 60 + Math.random() * 20;
+      }
+      
       const mockSeller = {
         seller_id: sellerId,
-        order_count: Math.floor(50 + Math.random() * 200),
-        avg_processing_time: 2 + Math.random() * 3,
-        avg_delivery_days: 4 + Math.random() * 4,
-        total_sales: 5000 + Math.random() * 20000,
-        prediction: Math.floor(Math.random() * 3)
+        order_count: Math.floor(orderCount),
+        avg_processing_time: processingTime,
+        avg_delivery_days: deliveryDays,
+        total_sales: totalSales,
+        prediction: sellerCluster,
+        on_time_delivery_rate: onTimeRate,
+        shipping_costs: totalSales * (0.05 + Math.random() * 0.1),
+        avg_order_value: totalSales / Math.floor(orderCount)
       };
       
       return mockSeller;
@@ -925,3 +1118,44 @@ export async function fetchSellerDetails(sellerId) {
     throw error;
   }
 }
+
+/**
+ * Run a supply chain analysis with given parameters
+ * @param {Object} params - Analysis parameters
+ * @returns {Promise<Object>} - Analysis results
+ */
+export async function runSupplyChainAnalysis(params) {
+  try {
+    const response = await axios.post(`${API_BASE_URL}/run-analysis`, params);
+    return response.data;
+  } catch (error) {
+    console.error('Error running supply chain analysis:', error);
+    throw error;
+  }
+}
+
+/**
+ * Export raw data files for downloading
+ * @param {String} filename - File to download
+ * @returns {Promise<Blob>} - File blob for download
+ */
+export async function exportDataFile(filename) {
+  try {
+    const response = await fetch(`/data/${filename}`);
+    if (!response.ok) {
+      throw new Error(`File not found: ${filename}`);
+    }
+    return await response.blob();
+  } catch (error) {
+    console.error(`Error exporting file ${filename}:`, error);
+    throw error;
+  }
+}
+
+export default {
+  loadDashboardData,
+  fetchCategoryForecast,
+  fetchSellerDetails,
+  runSupplyChainAnalysis,
+  exportDataFile
+};

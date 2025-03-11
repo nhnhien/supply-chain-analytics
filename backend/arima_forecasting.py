@@ -7,13 +7,15 @@ from statsmodels.tsa.stattools import adfuller
 from statsmodels.graphics.tsaplots import plot_acf, plot_pacf
 from statsmodels.tsa.seasonal import seasonal_decompose
 from sklearn.metrics import mean_absolute_error, mean_squared_error
+import pmdarima as pm  # For auto_arima
 import seaborn as sns
 import warnings
 warnings.filterwarnings("ignore")
 
 class DemandForecaster:
     """
-    Class for demand forecasting using ARIMA models
+    Enhanced class for demand forecasting using ARIMA models
+    with improved parameter selection and seasonality handling
     """
     def __init__(self, data_path="demand_by_category.csv"):
         """
@@ -29,6 +31,9 @@ class DemandForecaster:
         self.performance = {}
         self.best_params = {}
         self.count_column = None
+        self.use_auto_arima = False  # Set to True for auto parameter selection
+        self.seasonal = False        # Set to True to include seasonality
+        self.seasonal_period = 12    # Default seasonal period (monthly data)
         
     def _get_count_column(self, category):
         """Helper to find the appropriate count column for a category"""
@@ -51,7 +56,7 @@ class DemandForecaster:
         
     def preprocess_data(self):
         """
-        Preprocess data for time series analysis
+        Preprocess data for time series analysis with enhanced date handling
         """
         # Check if we need to extract year and month
         if 'year' not in self.data.columns or 'month' not in self.data.columns:
@@ -320,7 +325,7 @@ class DemandForecaster:
 
     def find_best_parameters(self, category, max_p=3, max_d=2, max_q=3):
         """
-        Find the best ARIMA parameters using AIC criterion
+        Find the best ARIMA parameters using either auto_arima or grid search
         
         Args:
             category: Product category to analyze
@@ -329,7 +334,7 @@ class DemandForecaster:
             max_q: Maximum value for q (MA parameter)
             
         Returns:
-            Tuple with best parameters (p, d, q)
+            Tuple with best parameters (p, d, q) or (p, d, q, P, D, Q, s) for SARIMA
         """
         if category not in self.category_data:
             print(f"Category '{category}' not found")
@@ -342,15 +347,74 @@ class DemandForecaster:
             
         ts = self.category_data[category][count_column]
         
+        # Check if there's enough data for modeling
+        if len(ts) < 6:
+            print(f"Insufficient data for {category} to find optimal parameters, using default")
+            return (1, 1, 1)  # Default parameters
+            
+        # Use more sophisticated parameter selection if auto_arima is enabled
+        if self.use_auto_arima:
+            try:
+                print(f"Using auto_arima for {category}")
+                
+                # Determine if we should use seasonal model
+                seasonal = self.seasonal and len(ts) >= (2 * self.seasonal_period)
+                
+                if seasonal:
+                    # SARIMA model
+                    model = pm.auto_arima(
+                        ts,
+                        start_p=0, max_p=max_p,
+                        start_q=0, max_q=max_q,
+                        start_P=0, max_P=1,
+                        start_Q=0, max_Q=1,
+                        d=None, max_d=max_d, D=None, max_D=1,
+                        seasonal=True, m=self.seasonal_period,
+                        information_criterion='aic',
+                        trace=False,
+                        error_action='ignore',
+                        suppress_warnings=True,
+                        stepwise=True
+                    )
+                    # Extract parameters including seasonal components
+                    order = model.order
+                    seasonal_order = model.seasonal_order
+                    
+                    # Return complete parameter set for SARIMA
+                    params = (order[0], order[1], order[2], 
+                              seasonal_order[0], seasonal_order[1], seasonal_order[2], seasonal_order[3])
+                    
+                    print(f"Best SARIMA parameters for {category}: SARIMA{order}x{seasonal_order} (AIC: {model.aic():.2f})")
+                else:
+                    # Regular ARIMA model
+                    model = pm.auto_arima(
+                        ts,
+                        start_p=0, max_p=max_p,
+                        start_q=0, max_q=max_q,
+                        d=None, max_d=max_d,
+                        seasonal=False,
+                        information_criterion='aic',
+                        trace=False,
+                        error_action='ignore',
+                        suppress_warnings=True,
+                        stepwise=True
+                    )
+                    # Extract ARIMA parameters
+                    params = model.order
+                    print(f"Best ARIMA parameters for {category}: {params} (AIC: {model.aic():.2f})")
+                
+                self.best_params[category] = params
+                return params
+                
+            except Exception as e:
+                print(f"Error in auto_arima for {category}: {e}")
+                print("Falling back to grid search")
+                # Fall back to grid search
+            
+        # Grid search for best parameters
         best_aic = float('inf')
         best_params = None
         
-        # Check if we have enough data for modeling
-        if len(ts) < 6:  # Minimum data points for reliable parameter search
-            print(f"Insufficient data for {category} to find optimal parameters, using default")
-            return (1, 1, 1)  # Default parameters
-        
-        # Grid search for best parameters
         for p in range(max_p + 1):
             for d in range(max_d + 1):
                 for q in range(max_q + 1):
@@ -431,11 +495,32 @@ class DemandForecaster:
         else:
             # Default parameters
             params = (1, 1, 1)
+        
+        # Check if we're using seasonal ARIMA (SARIMA)
+        is_seasonal = self.seasonal and len(params) > 3 and params[6] > 1
             
         # If d=2, we need at least 3+d data points, so adjust if necessary
-        if params[1] > 1 and len(ts) < (3 + params[1]):
-            print(f"Insufficient data for differencing with d={params[1]}, reducing d parameter")
-            params = (params[0], 1, params[2])  # Reduce d to 1
+        if is_seasonal:
+            # For SARIMA: unpack parameters
+            p, d, q, P, D, Q, s = params
+            
+            # Check if we have enough data for SARIMA
+            if len(ts) < (4 + d + D * s):
+                print(f"Insufficient data for SARIMA with parameters {params}, reducing to simple ARIMA")
+                params = (p, d, q)  # Fall back to non-seasonal ARIMA
+                is_seasonal = False
+        else:
+            # For ARIMA: just use the tuple as is
+            if len(params) > 3:
+                # If we got SARIMA params but aren't using seasonal model
+                p, d, q = params[:3]
+                params = (p, d, q)
+                
+            # Check if we have enough data for differencing
+            if params[1] > 1 and len(ts) < (3 + params[1]):
+                print(f"Insufficient data for differencing with d={params[1]}, reducing d parameter")
+                p, _, q = params
+                params = (p, 1, q)  # Reduce d to 1
         
         # Train-test split for validation (80-20 split)
         train_size = max(int(len(ts) * 0.8), 3)  # Ensure at least 3 data points for training
@@ -450,8 +535,18 @@ class DemandForecaster:
             
             try:
                 # Train model on training data
-                model = ARIMA(train, order=params)
-                model_fit = model.fit()
+                if is_seasonal:
+                    from statsmodels.tsa.statespace.sarimax import SARIMAX
+                    p, d, q, P, D, Q, s = params
+                    model = SARIMAX(train, 
+                                  order=(p, d, q), 
+                                  seasonal_order=(P, D, Q, s),
+                                  enforce_stationarity=False,
+                                  enforce_invertibility=False)
+                    model_fit = model.fit(disp=False)
+                else:
+                    model = ARIMA(train, order=params)
+                    model_fit = model.fit()
                 
                 # Store the model
                 self.models[category] = model_fit
@@ -507,8 +602,18 @@ class DemandForecaster:
         
         # Train final model on all data
         try:
-            final_model = ARIMA(ts, order=params)
-            final_model_fit = final_model.fit()
+            if is_seasonal:
+                from statsmodels.tsa.statespace.sarimax import SARIMAX
+                p, d, q, P, D, Q, s = params
+                final_model = SARIMAX(ts, 
+                                    order=(p, d, q), 
+                                    seasonal_order=(P, D, Q, s),
+                                    enforce_stationarity=False,
+                                    enforce_invertibility=False)
+                final_model_fit = final_model.fit(disp=False)
+            else:
+                final_model = ARIMA(ts, order=params)
+                final_model_fit = final_model.fit()
             
             # Generate forecast
             forecast_values = final_model_fit.forecast(steps=periods)
@@ -548,11 +653,24 @@ class DemandForecaster:
                 
                 # Add confidence intervals
                 try:
-                    forecast_with_ci = final_model_fit.get_forecast(periods)
-                    conf_int = forecast_with_ci.conf_int()
-                    # Ensure lower CI is positive
-                    forecast_df['lower_ci'] = np.maximum(conf_int.iloc[:, 0].values, 0)
-                    forecast_df['upper_ci'] = conf_int.iloc[:, 1].values
+                    if is_seasonal:
+                        # For SARIMA, use different approach for confidence intervals
+                        # Simple approximation based on validation RMSE
+                        if rmse is not None:
+                            z_value = 1.96  # 95% confidence
+                            forecast_df['lower_ci'] = np.maximum(forecast_values - z_value * rmse, 0)
+                            forecast_df['upper_ci'] = forecast_values + z_value * rmse
+                        else:
+                            # Without RMSE, use a simple percentage-based approach
+                            forecast_df['lower_ci'] = np.maximum(forecast_values * 0.7, 0)
+                            forecast_df['upper_ci'] = forecast_values * 1.3
+                    else:
+                        # For ARIMA, use the built-in method
+                        forecast_with_ci = final_model_fit.get_forecast(periods)
+                        conf_int = forecast_with_ci.conf_int()
+                        # Ensure lower CI is positive
+                        forecast_df['lower_ci'] = np.maximum(conf_int.iloc[:, 0].values, 0)
+                        forecast_df['upper_ci'] = conf_int.iloc[:, 1].values
                 except Exception as e:
                     print(f"Warning: Could not calculate confidence intervals for {category}: {e}")
                     # Use a simple estimate based on RMSE if available
@@ -588,6 +706,7 @@ class DemandForecaster:
                     'model': final_model_fit,
                     'forecast': forecast_df,
                     'params': params,
+                    'seasonal': is_seasonal,
                     'performance': self.performance[category],
                     'visualization_data': visualization_data
                 }
@@ -697,6 +816,7 @@ class DemandForecaster:
             'model': None,
             'forecast': forecast_df,
             'params': self.best_params.get(category, (1, 1, 1)),
+            'seasonal': False,
             'performance': self.performance[category],
             'is_fallback': True  # Flag that this is a fallback forecast
         }
@@ -721,7 +841,8 @@ class DemandForecaster:
         for category, df in self.category_data.items():
             count_column = self._get_count_column(category)
             if count_column:
-                all_categories[category] = 0  # Default if no count column found
+                total_demand = df[count_column].sum()
+                all_categories[category] = total_demand if not pd.isna(total_demand) else 0
                 
         top_categories = sorted(all_categories.items(), key=lambda x: x[1], reverse=True)[:top_n]
         
@@ -759,11 +880,14 @@ class DemandForecaster:
         perf = self.performance[category]
         params = self.best_params.get(category, (1, 1, 1))
         
+        # Check if we used seasonal ARIMA
+        is_seasonal = len(params) > 3
+        
         # Create plot
         plt.figure(figsize=figsize)
         
         # Plot historical data
-        plt.plot(historical.index, historical.values, label='Historical Demand', color='blue')
+        plt.plot(historical.index, historical.values, label='Historical Demand', color='blue', marker='o')
         
         # Plot forecast
         plt.plot(forecast.index, forecast['forecast'], label='Forecast', color='red')
@@ -776,10 +900,18 @@ class DemandForecaster:
         
         # Add labels and title
         title = f'Demand Forecast for {category}\n'
-        if perf['mape'] is not None:
-            title += f'ARIMA{params} (MAPE: {perf["mape"]:.2f}%, RMSE: {perf["rmse"]:.2f})'
+        if is_seasonal:
+            # For SARIMA, display parameters differently
+            p, d, q, P, D, Q, s = params
+            model_name = f"SARIMA({p},{d},{q})x({P},{D},{Q},{s})"
         else:
-            title += f'ARIMA{params} (Limited data)'
+            # For ARIMA, use the standard format
+            model_name = f"ARIMA{params}"
+            
+        if perf['mape'] is not None:
+            title += f'{model_name} (MAPE: {perf["mape"]:.2f}%, RMSE: {perf["rmse"]:.2f})'
+        else:
+            title += f'{model_name} (Limited data)'
             
         plt.title(title)
         plt.xlabel('Date')
@@ -827,12 +959,12 @@ class DemandForecaster:
                 
                 # Handle case when forecast doesn't have confidence intervals
                 if 'lower_ci' in forecast.columns and 'upper_ci' in forecast.columns:
-                    min_demand = forecast['lower_ci'].min()
-                    max_demand = forecast['upper_ci'].max()
+                    min_forecast = forecast['lower_ci'].min()
+                    max_forecast = forecast['upper_ci'].max()
                 else:
                     # Use 30% below and above the forecast as an estimate
-                    min_demand = max(future_demand * 0.7, 0)
-                    max_demand = future_demand * 1.3
+                    min_forecast = max(future_demand * 0.7, 0)
+                    max_forecast = future_demand * 1.3
                 
                 # Calculate growth rate with robust handling
                 if avg_demand > 0:
@@ -848,18 +980,27 @@ class DemandForecaster:
                 print(f"Error calculating forecast statistics for {category}: {e}")
                 # Use default values
                 future_demand = avg_demand
-                min_demand = max(avg_demand * 0.7, 0)
-                max_demand = avg_demand * 1.3
+                min_forecast = max(avg_demand * 0.7, 0)
+                max_forecast = avg_demand * 1.3
                 growth_rate = 0
+            
+            # Format ARIMA parameters for display
+            if len(params) > 3:
+                # For SARIMA, format differently
+                p, d, q, P, D, Q, s = params
+                arima_params = f"({p},{d},{q})x({P},{D},{Q},{s})"
+            else:
+                # For ARIMA, use the standard format
+                arima_params = f"({params[0]},{params[1]},{params[2]})"
             
             # Add to report
             report_data.append({
                 'category': category,
-                'arima_params': f"({params[0]},{params[1]},{params[2]})",
+                'arima_params': arima_params,
                 'avg_historical_demand': avg_demand,
                 'forecast_demand': future_demand,
-                'min_forecast': min_demand,
-                'max_forecast': max_demand,
+                'min_forecast': min_forecast,
+                'max_forecast': max_forecast,
                 'growth_rate': growth_rate,
                 'mae': perf['mae'],
                 'rmse': perf['rmse'],
@@ -893,8 +1034,13 @@ if __name__ == "__main__":
     forecaster = DemandForecaster()
     forecaster.preprocess_data()
     
+    # Enable auto ARIMA and seasonality
+    forecaster.use_auto_arima = True
+    forecaster.seasonal = True
+    forecaster.seasonal_period = 12  # Monthly data
+    
     # Run forecasts for top 5 categories
-    forecasts = forecaster.run_all_forecasts(top_n=5, periods=6)
+    forecasts = forecaster.run_all_forecasts(top_n=15, periods=6)
     
     # Generate report
     report = forecaster.generate_forecast_report()
