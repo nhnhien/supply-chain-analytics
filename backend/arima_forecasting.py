@@ -103,6 +103,7 @@ class DemandForecaster:
         
         # Create category-specific datasets
         self.category_data = {}
+        # Include all categories with at least 1 data point
         for category in self.categories:
             if pd.isna(category):
                 continue
@@ -111,10 +112,9 @@ class DemandForecaster:
             category_df.sort_values('date', inplace=True)
             category_df.set_index('date', inplace=True)
             
-            # Only keep categories with enough data
-            if len(category_df) >= 12:  # At least 12 months of data
-                self.category_data[category] = category_df
-        
+            # Add all categories to the data dictionary
+            self.category_data[category] = category_df
+            
         # Determine the count column for the dataset
         possible_count_columns = ['order_count', 'count', 'order_id_count', 'count(order_id)']
         
@@ -136,7 +136,7 @@ class DemandForecaster:
                     print(f"No standard count column found. Using '{self.count_column}' as count column")
                     break
                     
-        print(f"Processed {len(self.category_data)} categories with sufficient data")
+        print(f"Processed {len(self.category_data)} categories")
         
     def test_stationarity(self, category):
         """
@@ -157,15 +157,35 @@ class DemandForecaster:
             
         ts = self.category_data[category][count_column]
         
-        # Run ADF test
-        result = adfuller(ts.dropna())
+        # Check if there's enough data for the test
+        if len(ts) < 4:  # ADF test requires at least 4 data points
+            return {
+                "adf_statistic": None,
+                "p_value": None,
+                "critical_values": None,
+                "is_stationary": False,
+                "error": "Insufficient data for stationarity test"
+            }
         
-        return {
-            "adf_statistic": result[0],
-            "p_value": result[1],
-            "critical_values": result[4],
-            "is_stationary": result[1] < 0.05
-        }
+        try:
+            # Run ADF test
+            result = adfuller(ts.dropna())
+            
+            return {
+                "adf_statistic": result[0],
+                "p_value": result[1],
+                "critical_values": result[4],
+                "is_stationary": result[1] < 0.05
+            }
+        except Exception as e:
+            print(f"Error in stationarity test for {category}: {e}")
+            return {
+                "adf_statistic": None,
+                "p_value": None,
+                "critical_values": None,
+                "is_stationary": False,
+                "error": str(e)
+            }
         
     def plot_time_series(self, category, figsize=(12, 8)):
         """
@@ -251,6 +271,11 @@ class DemandForecaster:
             
         ts = self.category_data[category][count_column]
         
+        # Check if we have enough data
+        if len(ts) < 4:
+            print(f"Insufficient data for ACF/PACF analysis for {category}")
+            return
+        
         # Check stationarity
         stationarity_result = self.test_stationarity(category)
         
@@ -269,12 +294,18 @@ class DemandForecaster:
         try:
             # Plot ACF
             max_lags = min(24, len(ts_diff) // 2 - 1)  # Max lags = 50% of series length - 1
-            plot_acf(ts_diff, ax=ax1, lags=max_lags)
-            ax1.set_title('Autocorrelation Function')
-            
-            # Plot PACF
-            plot_pacf(ts_diff, ax=ax2, lags=max_lags)
-            ax2.set_title('Partial Autocorrelation Function')
+            if max_lags > 0:  # Ensure we have at least 1 lag
+                plot_acf(ts_diff, ax=ax1, lags=max_lags)
+                ax1.set_title('Autocorrelation Function')
+                
+                # Plot PACF
+                plot_pacf(ts_diff, ax=ax2, lags=max_lags)
+                ax2.set_title('Partial Autocorrelation Function')
+            else:
+                ax1.text(0.5, 0.5, 'Insufficient data for ACF', 
+                       horizontalalignment='center', verticalalignment='center')
+                ax2.text(0.5, 0.5, 'Insufficient data for PACF', 
+                       horizontalalignment='center', verticalalignment='center')
         except Exception as e:
             print(f"Error plotting ACF/PACF for {category}: {e}")
             ax1.text(0.5, 0.5, f'Error plotting ACF: {e}', 
@@ -315,8 +346,8 @@ class DemandForecaster:
         best_params = None
         
         # Check if we have enough data for modeling
-        if len(ts) < 12:
-            print(f"Insufficient data for {category} to find optimal parameters")
+        if len(ts) < 6:  # Minimum data points for reliable parameter search
+            print(f"Insufficient data for {category} to find optimal parameters, using default")
             return (1, 1, 1)  # Default parameters
         
         # Grid search for best parameters
@@ -374,6 +405,11 @@ class DemandForecaster:
             
         ts = self.category_data[category][count_column]
         
+        # Check if we have enough data for forecasting (at least 4 points)
+        if len(ts) < 4:
+            print(f"Insufficient data points for {category}, need at least 4 data points")
+            return self._create_empty_forecast_results(category, ts)
+        
         # Determine ARIMA parameters
         if use_best_params:
             if category not in self.best_params:
@@ -383,32 +419,55 @@ class DemandForecaster:
         else:
             # Default parameters
             params = (1, 1, 1)
+            
+        # If d=2, we need at least 3+d data points, so adjust if necessary
+        if params[1] > 1 and len(ts) < (3 + params[1]):
+            print(f"Insufficient data for differencing with d={params[1]}, reducing d parameter")
+            params = (params[0], 1, params[2])  # Reduce d to 1
         
         # Train-test split for validation (80-20 split)
-        train_size = int(len(ts) * 0.8)
-        train, test = ts[:train_size], ts[train_size:]
+        train_size = max(int(len(ts) * 0.8), 3)  # Ensure at least 3 data points for training
+        test_size = len(ts) - train_size
         
-        # Train model on training data
-        model = ARIMA(train, order=params)
-        model_fit = model.fit()
+        # Initialize metrics
+        mae, rmse, mape = None, None, None
         
-        # Store the model
-        self.models[category] = model_fit
-        
-        # Validate on test data
-        forecast = model_fit.forecast(steps=len(test))
-        
-        # Calculate error metrics
-        if len(test) > 0:
+        # Only perform validation if we have enough data
+        if test_size > 0:
+            train, test = ts[:train_size], ts[train_size:]
+            
             try:
-                mae = mean_absolute_error(test, forecast)
-                rmse = np.sqrt(mean_squared_error(test, forecast))
-                mape = np.mean(np.abs((test - forecast) / test)) * 100
+                # Train model on training data
+                model = ARIMA(train, order=params)
+                model_fit = model.fit()
+                
+                # Store the model
+                self.models[category] = model_fit
+                
+                # Validate on test data
+                forecast = model_fit.forecast(steps=len(test))
+                
+                # Calculate error metrics with robust handling
+                try:
+                    mae = mean_absolute_error(test, forecast)
+                    rmse = np.sqrt(mean_squared_error(test, forecast))
+                    
+                    # Robust MAPE calculation that handles zeros
+                    # Calculate MAPE only on non-zero actual values
+                    non_zero_indices = test > 0
+                    if np.any(non_zero_indices):
+                        mape = np.mean(np.abs((test[non_zero_indices] - forecast[non_zero_indices]) / test[non_zero_indices])) * 100
+                    else:
+                        print(f"Warning: Cannot calculate MAPE for {category} as actual values contain zeros")
+                        mape = None
+                except Exception as e:
+                    print(f"Error calculating metrics for {category}: {e}")
+                    mae, rmse, mape = None, None, None
             except Exception as e:
-                print(f"Error calculating metrics: {e}")
-                mae, rmse, mape = None, None, None
+                print(f"Error in model validation for {category}: {e}")
+                # Continue with forecasting despite validation error
         else:
-            mae, rmse, mape = None, None, None
+            print(f"Warning: Insufficient data for validation split for {category}, proceeding with full data training")
         
         # Store performance metrics
         self.performance[category] = {
@@ -424,27 +483,147 @@ class DemandForecaster:
             
             # Generate forecast
             forecast_values = final_model_fit.forecast(steps=periods)
-            forecast_index = pd.date_range(start=ts.index[-1], periods=periods+1, freq='M')[1:]
             
-            # Create forecast DataFrame
-            forecast_df = pd.DataFrame({
-                'forecast': forecast_values,
-                'lower_ci': final_model_fit.get_forecast(periods).conf_int().iloc[:, 0],
-                'upper_ci': final_model_fit.get_forecast(periods).conf_int().iloc[:, 1]
-            }, index=forecast_index)
+            # Ensure forecast values are positive (replace negative values with 0)
+            forecast_values = np.maximum(forecast_values, 0)
             
-            # Store forecast
-            self.forecasts[category] = forecast_df
+            # Carefully create forecast index
+            try:
+                if isinstance(ts.index[-1], pd.Timestamp):
+                    # Handle timestamp index - ensure proper frequency
+                    last_date = ts.index[-1]
+                    # Create a proper date range with monthly frequency
+                    # Use MS (month start) to ensure proper monthly intervals
+                    forecast_index = pd.date_range(start=last_date, periods=periods+1, freq='MS')[1:]
+                else:
+                    # Handle numeric index
+                    try:
+                        last_idx = int(ts.index[-1])
+                        forecast_index = range(last_idx + 1, last_idx + periods + 1)
+                    except:
+                        # If conversion fails, use simple range
+                        forecast_index = range(periods)
+            except Exception as e:
+                print(f"Error creating forecast index for {category}: {e}")
+                # Fallback to simple numeric index
+                forecast_index = range(periods)
             
-            return {
-                'model': final_model_fit,
-                'forecast': forecast_df,
-                'params': params,
-                'performance': self.performance[category]
-            }
+            # Create forecast DataFrame with safe values
+            try:
+                # Ensure forecast values are valid numbers
+                forecast_values = pd.Series(forecast_values).fillna(ts.mean()).values
+                
+                forecast_df = pd.DataFrame({
+                    'forecast': forecast_values
+                }, index=forecast_index)
+                
+                # Add confidence intervals
+                try:
+                    forecast_with_ci = final_model_fit.get_forecast(periods)
+                    conf_int = forecast_with_ci.conf_int()
+                    # Ensure lower CI is positive
+                    forecast_df['lower_ci'] = np.maximum(conf_int.iloc[:, 0].values, 0)
+                    forecast_df['upper_ci'] = conf_int.iloc[:, 1].values
+                except Exception as e:
+                    print(f"Warning: Could not calculate confidence intervals for {category}: {e}")
+                    # Use a simple estimate based on RMSE if available
+                    if rmse is not None:
+                        forecast_df['lower_ci'] = np.maximum(forecast_values - 1.96 * rmse, 0)
+                        forecast_df['upper_ci'] = forecast_values + 1.96 * rmse
+                    else:
+                        # Use a percentage of the forecast values (30% interval)
+                        forecast_df['lower_ci'] = np.maximum(forecast_values * 0.7, 0)
+                        forecast_df['upper_ci'] = forecast_values * 1.3
+                
+                # Store forecast
+                self.forecasts[category] = forecast_df
+                
+                return {
+                    'model': final_model_fit,
+                    'forecast': forecast_df,
+                    'params': params,
+                    'performance': self.performance[category]
+                }
+            except Exception as e:
+                print(f"Error creating forecast DataFrame for {category}: {e}")
+                return self._create_empty_forecast_results(category, ts)
+                
         except Exception as e:
             print(f"Error in final forecasting for {category}: {e}")
-            return None
+            return self._create_empty_forecast_results(category, ts)
+    
+    def _create_empty_forecast_results(self, category, ts):
+        """
+        Create empty forecast results when forecasting fails
+        
+        Args:
+            category: Product category
+            ts: Time series data
+        
+        Returns:
+            Dictionary with minimal forecast results
+        """
+        # Get basic statistics from the time series
+        # Use absolute value to ensure positive value
+        avg_value = abs(ts.mean()) if not ts.empty else max(ts.max(), 1) if not ts.empty else 1
+        
+        # Create an empty forecast with at least the average value
+        periods = 6  # Default forecast horizon
+        
+        # Create forecast index carefully
+        try:
+            if isinstance(ts.index[-1], pd.Timestamp) and not ts.empty:
+                # Handle timestamp index - ensure proper frequency
+                last_date = ts.index[-1]
+                # Create a proper date range with monthly frequency starting after the last date
+                # MS = month start frequency
+                forecast_index = pd.date_range(start=last_date, periods=periods+1, freq='MS')[1:]
+            else:
+                # Handle numeric index or empty time series
+                if not ts.empty:
+                    try:
+                        last_idx = int(ts.index[-1])
+                        forecast_index = range(last_idx + 1, last_idx + periods + 1)
+                    except:
+                        # If conversion fails, use simple range
+                        forecast_index = range(periods)
+                else:
+                    forecast_index = range(periods)
+        except Exception as e:
+            print(f"Error creating fallback forecast index for {category}: {e}")
+            # Ultimate fallback - simple range
+            forecast_index = range(periods)
+        
+        # Create a simple forecast DataFrame using a slightly reduced avg_value
+        # to avoid projecting growth with limited data
+        forecast_values = [max(avg_value * 0.95, 1)] * periods  # Slight reduction, minimum 1
+        
+        forecast_df = pd.DataFrame({
+            'forecast': forecast_values,
+            'lower_ci': [max(avg_value * 0.7, 0)] * periods,  # Simple 30% lower bound
+            'upper_ci': [avg_value * 1.3] * periods   # Simple 30% upper bound
+        }, index=forecast_index)
+        
+        # Store the forecast
+        self.forecasts[category] = forecast_df
+        
+        # Calculate a simple RMSE based on the standard deviation
+        rmse = ts.std() if len(ts) > 1 else None
+        
+        # Store minimal performance metrics
+        self.performance[category] = {
+            'mae': None,
+            'rmse': rmse,
+            'mape': None
+        }
+        
+        return {
+            'model': None,
+            'forecast': forecast_df,
+            'params': self.best_params.get(category, (1, 1, 1)),
+            'performance': self.performance[category],
+            'is_fallback': True  # Flag that this is a fallback forecast
+        }
     
     def plot_forecast(self, category, figsize=(12, 6)):
         """
@@ -491,7 +670,7 @@ class DemandForecaster:
         if perf['mape'] is not None:
             title += f'ARIMA{params} (MAPE: {perf["mape"]:.2f}%, RMSE: {perf["rmse"]:.2f})'
         else:
-            title += f'ARIMA{params}'
+            title += f'ARIMA{params} (Limited data)'
             
         plt.title(title)
         plt.xlabel('Date')
@@ -572,15 +751,38 @@ class DemandForecaster:
                 continue
                 
             historical = self.category_data[category][count_column]
-            avg_demand = historical.mean()
+            avg_demand = max(historical.mean(), 1)  # Ensure at least 1
             
             # Get future demand statistics
-            future_demand = forecast['forecast'].mean()
-            min_demand = forecast['lower_ci'].min()
-            max_demand = forecast['upper_ci'].max()
-            
-            # Calculate growth rate
-            growth_rate = ((future_demand - avg_demand) / avg_demand) * 100 if avg_demand > 0 else 0
+            try:
+                future_demand = forecast['forecast'].mean()
+                
+                # Handle case when forecast doesn't have confidence intervals
+                if 'lower_ci' in forecast.columns and 'upper_ci' in forecast.columns:
+                    min_demand = forecast['lower_ci'].min()
+                    max_demand = forecast['upper_ci'].max()
+                else:
+                    # Use 30% below and above the forecast as an estimate
+                    min_demand = max(future_demand * 0.7, 0)
+                    max_demand = future_demand * 1.3
+                
+                # Calculate growth rate with robust handling
+                if avg_demand > 0:
+                    growth_rate = ((future_demand - avg_demand) / avg_demand) * 100
+                else:
+                    # If historical demand is zero, we can't calculate percentage growth
+                    growth_rate = 0 if future_demand == 0 else 100  # Assume 100% growth if going from 0 to non-zero
+                
+                # Bound growth rate to reasonable values (-100% to +100%)
+                growth_rate = max(min(growth_rate, 100), -100)
+                
+            except Exception as e:
+                print(f"Error calculating forecast statistics for {category}: {e}")
+                # Use default values
+                future_demand = avg_demand
+                min_demand = max(avg_demand * 0.7, 0)
+                max_demand = avg_demand * 1.3
+                growth_rate = 0
             
             # Add to report
             report_data.append({
@@ -593,11 +795,23 @@ class DemandForecaster:
                 'growth_rate': growth_rate,
                 'mae': perf['mae'],
                 'rmse': perf['rmse'],
-                'mape': perf['mape']
+                'mape': perf['mape'],
+                # Add a flag for forecasts with limited data
+                'data_quality': 'Limited' if len(historical) < 8 else 'Sufficient'
             })
             
         # Create DataFrame and save
         report_df = pd.DataFrame(report_data)
+        
+        # Ensure numeric columns have appropriate data types
+        numeric_cols = ['avg_historical_demand', 'forecast_demand', 'min_forecast', 
+                       'max_forecast', 'growth_rate', 'mae', 'rmse', 'mape']
+        
+        for col in numeric_cols:
+            if col in report_df.columns:
+                # Convert to float but keep NaN values
+                report_df[col] = pd.to_numeric(report_df[col], errors='coerce')
+        
         report_df.to_csv(output_file, index=False)
         
         print(f"Forecast report saved to {output_file}")
@@ -613,4 +827,4 @@ if __name__ == "__main__":
     forecasts = forecaster.run_all_forecasts(top_n=5, periods=6)
     
     # Generate report
-    report = forecaster.generate_forecast_report()
+    report = forecaster.generate_forecast_report()                   

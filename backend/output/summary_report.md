@@ -1,5 +1,5 @@
 # Supply Chain Analytics for Demand Forecasting
-## Report Generated on 2025-03-11 09:58:52
+## Report Generated on 2025-03-11 10:59:06
 
 ### Dataset Summary
 - Data source: ./data
@@ -15,9 +15,9 @@
 5. watches_gifts
 
 #### Demand Forecast Highlights
-- toys: Avg. forecasted demand nan units/month
-- health_beauty: Avg. forecasted demand nan units/month
-- computers_accessories: Avg. forecasted demand nan units/month
+- toys: Avg. forecasted demand 0.0 units/month
+- health_beauty: Avg. forecasted demand 1555.5 units/month
+- computers_accessories: Avg. forecasted demand 1348.1 units/month
 
 #### Inventory Recommendations
 - toys: Reorder at 14017.7 units, Safety stock: 10513.2 units
