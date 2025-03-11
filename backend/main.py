@@ -22,6 +22,102 @@ from visualization_module import SupplyChainVisualizer
 from spark_implementation import create_spark_session, load_ecommerce_data, process_orders, build_unified_supply_chain_dataset
 from spark_implementation import analyze_product_demand, analyze_seller_efficiency, analyze_geographical_patterns
 from spark_implementation import analyze_supply_chain_metrics, generate_supply_chain_recommendations
+from data_preprocessing import preprocess_order_data, preprocess_product_data, preprocess_order_items, calculate_performance_metrics
+
+def calculate_delivery_days(orders, supply_chain=None):
+    """
+    Calculate delivery days based on timestamp data
+    
+    Args:
+        orders: DataFrame containing order data
+        supply_chain: Optional unified supply chain DataFrame for category/state-based estimations
+    
+    Returns:
+        Updated orders DataFrame with delivery_days calculated
+    """
+    # Check if preprocess_order_data already calculated delivery_days
+    if 'delivery_days' in orders.columns and not orders['delivery_days'].isna().all():
+        # If we already have some delivery days calculated, just fill in the gaps
+        # using category and state information from supply_chain
+        pass
+    else:
+        # Convert timestamp columns to datetime
+        orders['order_purchase_timestamp'] = pd.to_datetime(orders['order_purchase_timestamp'])
+        orders['order_approved_at'] = pd.to_datetime(orders['order_approved_at'])
+        
+        # Calculate processing time (days between purchase and approval)
+        orders['processing_time'] = (orders['order_approved_at'] - orders['order_purchase_timestamp']).dt.days
+        
+        # If order_delivered_timestamp exists, calculate actual delivery days
+        if 'order_delivered_customer_date' in orders.columns:
+            orders['order_delivered_customer_date'] = pd.to_datetime(orders['order_delivered_customer_date'])
+            mask = orders['order_delivered_customer_date'].notna() & orders['order_purchase_timestamp'].notna()
+            orders.loc[mask, 'delivery_days'] = (
+                orders.loc[mask, 'order_delivered_customer_date'] - 
+                orders.loc[mask, 'order_purchase_timestamp']
+            ).dt.days
+        else:
+            # If we don't have delivery timestamp, estimate from order_estimated_delivery_date if available
+            if 'order_estimated_delivery_date' in orders.columns:
+                orders['order_estimated_delivery_date'] = pd.to_datetime(orders['order_estimated_delivery_date'])
+                mask = orders['order_estimated_delivery_date'].notna() & orders['order_purchase_timestamp'].notna()
+                orders.loc[mask, 'estimated_delivery_days'] = (
+                    orders.loc[mask, 'order_estimated_delivery_date'] - 
+                    orders.loc[mask, 'order_purchase_timestamp']
+                ).dt.days
+                # Use estimated days when actual is not available
+                orders['delivery_days'] = orders.get('delivery_days', pd.Series(index=orders.index)).fillna(orders['estimated_delivery_days'])
+            else:
+                # Create a placeholder delivery_days column if it doesn't exist
+                if 'delivery_days' not in orders.columns:
+                    orders['delivery_days'] = None
+    
+    # If we have the supply_chain DataFrame and there are still missing values
+    if supply_chain is not None and orders['delivery_days'].isna().any():
+        # Use category level medians if product_category_name is available
+        if 'product_category_name' in supply_chain.columns:
+            # Ensure we're only using valid delivery_days for the median calculation
+            category_medians = supply_chain.dropna(subset=['delivery_days']).groupby('product_category_name')['delivery_days'].median().to_dict()
+            
+            # Join orders with order_items and products to get category info
+            if 'order_id' in supply_chain.columns:
+                order_categories = supply_chain[['order_id', 'product_category_name']].drop_duplicates()
+                orders_with_categories = orders.merge(order_categories, on='order_id', how='left')
+                
+                # Apply category medians
+                for category, median in category_medians.items():
+                    if pd.notna(median):
+                        category_mask = (orders_with_categories['product_category_name'] == category) & (orders['delivery_days'].isna())
+                        orders.loc[category_mask.index, 'delivery_days'] = median
+        
+        # Fill remaining NAs with customer state median if available
+        if 'customer_state' in supply_chain.columns and orders['delivery_days'].isna().any():
+            # Ensure we're only using valid delivery_days for the median calculation
+            state_medians = supply_chain.dropna(subset=['delivery_days']).groupby('customer_state')['delivery_days'].median().to_dict()
+            
+            # Join orders with customers to get state info
+            if 'order_id' in supply_chain.columns:
+                order_states = supply_chain[['order_id', 'customer_state']].drop_duplicates()
+                orders_with_states = orders.merge(order_states, on='order_id', how='left')
+                
+                # Apply state medians
+                for state, median in state_medians.items():
+                    if pd.notna(median):
+                        state_mask = (orders_with_states['customer_state'] == state) & (orders['delivery_days'].isna())
+                        orders.loc[state_mask.index, 'delivery_days'] = median
+    
+    # Fill any remaining NAs with global median
+    global_median = orders['delivery_days'].median()
+    if not pd.isna(global_median):
+        orders['delivery_days'] = orders['delivery_days'].fillna(global_median)
+    else:
+        # As a last resort, use a reasonable industry standard (7 days)
+        orders['delivery_days'] = orders['delivery_days'].fillna(7)
+    
+    # Ensure delivery days is within reasonable bounds (1-30 days)
+    orders['delivery_days'] = orders['delivery_days'].clip(1, 30)
+    
+    return orders
 
 def parse_arguments():
     """Parse command line arguments"""
@@ -57,20 +153,20 @@ def run_pandas_analysis(args):
     payments = pd.read_csv(os.path.join(args.data_dir, 'df_Payments.csv'))
     products = pd.read_csv(os.path.join(args.data_dir, 'df_Products.csv'))
     
-    # Preprocess orders
-    print("Preprocessing orders...")
-    orders['order_purchase_timestamp'] = pd.to_datetime(orders['order_purchase_timestamp'])
-    orders['order_approved_at'] = pd.to_datetime(orders['order_approved_at'])
+    # Create output directory for results
+    ensure_directory(args.output_dir)
     
-    # Extract year and month for time-based analysis
-    orders['order_year'] = orders['order_purchase_timestamp'].dt.year
-    orders['order_month'] = orders['order_purchase_timestamp'].dt.month
+    # Preprocess data
+    print("Preprocessing data...")
+    orders, delivery_metrics = preprocess_order_data(orders, args.output_dir)
+    products = preprocess_product_data(products, args.output_dir)
+    order_items = preprocess_order_items(order_items, args.output_dir)
     
-    # Calculate processing time
-    orders['processing_time'] = (orders['order_approved_at'] - orders['order_purchase_timestamp']).dt.days
+    # Calculate performance metrics
+    performance_metrics = calculate_performance_metrics(orders, order_items, args.output_dir)
     
-    # Add simulated delivery days (since actual data is missing)
-    orders['delivery_days'] = np.random.randint(3, 11, size=len(orders))
+    # Make sure delivery days calculation is complete
+    orders = calculate_delivery_days(orders)
     
     # Merge datasets
     print("Building unified dataset...")
@@ -83,15 +179,20 @@ def run_pandas_analysis(args):
     # Join with customers
     supply_chain = supply_chain.merge(customers, on='customer_id', how='left')
     
+    # Update delivery days with category and state information
+    orders = calculate_delivery_days(orders, supply_chain)
+    
+    # Rebuild supply_chain with updated orders
+    supply_chain = orders.merge(order_items, on='order_id', how='inner')
+    supply_chain = supply_chain.merge(products, on='product_id', how='left')
+    supply_chain = supply_chain.merge(customers, on='customer_id', how='left')
+    
     # Analyze monthly demand
     print("Analyzing monthly demand patterns...")
     monthly_demand = supply_chain.groupby(['product_category_name', 'order_year', 'order_month']).size().reset_index(name='count')
     
     # Get top categories
     top_categories = monthly_demand.groupby('product_category_name')['count'].sum().sort_values(ascending=False).head(args.top_n).index.tolist()
-    
-    # Create output directory for results
-    ensure_directory(args.output_dir)
     
     # Run time series forecasting
     print("Running time series forecasting...")
@@ -104,7 +205,7 @@ def run_pandas_analysis(args):
     # Generate forecast report
     forecast_report = forecaster.generate_forecast_report(os.path.join(args.output_dir, 'forecast_report.csv'))
     
-    # Calculate seller performance
+    # Calculate seller performance using real data
     print("Analyzing seller performance...")
     seller_performance = supply_chain.groupby('seller_id').agg({
         'order_id': 'count',
@@ -115,8 +216,23 @@ def run_pandas_analysis(args):
     
     seller_performance.columns = ['seller_id', 'order_count', 'avg_processing_time', 'avg_delivery_days', 'total_sales']
     
-    # Add simulated performance clusters (since we're not using Spark's ML clustering)
-    seller_performance['prediction'] = np.random.randint(0, 3, size=len(seller_performance))
+    # Perform manual clustering based on sales and processing time
+    q75_sales = seller_performance['total_sales'].quantile(0.75)
+    q25_sales = seller_performance['total_sales'].quantile(0.25)
+    q75_time = seller_performance['avg_processing_time'].quantile(0.75)
+    q25_time = seller_performance['avg_processing_time'].quantile(0.25)
+    
+    # Function to assign cluster
+    def assign_cluster(row):
+        if row['total_sales'] > q75_sales and row['avg_processing_time'] < q25_time:
+            return 0  # High performers
+        elif row['total_sales'] < q25_sales and row['avg_processing_time'] > q75_time:
+            return 2  # Low performers
+        else:
+            return 1  # Average performers
+    
+    # Apply clustering
+    seller_performance['prediction'] = seller_performance.apply(assign_cluster, axis=1)
     
     # Save seller performance data for the dashboard frontend
     seller_performance.to_csv(os.path.join(args.output_dir, 'seller_clusters.csv'), index=False)
@@ -152,7 +268,7 @@ def run_pandas_analysis(args):
     
     # Generate recommendations
     print("Generating supply chain recommendations...")
-    # Create safety stock and reorder point recommendations (simplified)
+    # Create safety stock and reorder point recommendations based on actual data
     recommendations = []
     
     for category in top_categories:
@@ -160,16 +276,23 @@ def run_pandas_analysis(args):
             # Get average monthly demand
             cat_demand = monthly_demand[monthly_demand['product_category_name'] == category]['count'].mean()
             
-            # Calculate safety stock (simplified formula)
-            safety_stock = cat_demand * 0.5  # 50% of average monthly demand
+            # Calculate safety stock based on variability in the data
+            cat_std = monthly_demand[monthly_demand['product_category_name'] == category]['count'].std()
+            # Use coefficient of variation to determine safety factor
+            cv = cat_std / cat_demand if cat_demand > 0 else 0.5
+            safety_factor = max(0.3, min(0.7, cv))  # Bound between 30-70%
             
-            # Calculate reorder point
-            lead_time_days = 7  # Assumption: 7 days lead time
+            safety_stock = cat_demand * safety_factor
+            
+            # Calculate reorder point using actual lead time if available
+            # Here we use a simple approach with the delivery days as a proxy for lead time
+            category_delivery = supply_chain[supply_chain['product_category_name'] == category]['delivery_days'].mean()
+            lead_time_days = category_delivery if not pd.isna(category_delivery) else 7  # Default to 7 days
             lead_time_fraction = lead_time_days / 30.0  # As fraction of month
             reorder_point = (cat_demand * lead_time_fraction) + safety_stock
             
             # Get next month forecast
-            next_month_forecast = forecasts[category]['forecast'].iloc[0]
+            next_month_forecast = forecasts[category]['forecast'].iloc[0] if len(forecasts[category]) > 0 else cat_demand
             
             recommendations.append({
                 'product_category': category,
@@ -220,8 +343,10 @@ def run_pandas_analysis(args):
         'forecasts': forecasts,
         'seller_performance': seller_performance,
         'recommendations': recommendations_df,
-        'state_metrics': state_metrics  # Add state metrics to the results
+        'state_metrics': state_metrics,  # Add state metrics to the results
+        'performance_metrics': performance_metrics  # Add overall performance metrics
     }
+
 def run_spark_analysis(args):
     """
     Run supply chain analysis using Apache Spark (for larger datasets)
@@ -239,7 +364,8 @@ def run_spark_analysis(args):
         print("Loading data...")
         orders, order_items, customers, products, payments = load_ecommerce_data(spark, args.data_dir)
         
-        # Process orders
+        # Process orders - NOTE: You'll need to modify the process_orders function
+        # in spark_implementation.py to use the new delivery days calculation logic
         print("Processing orders...")
         processed_orders = process_orders(orders)
         
@@ -344,7 +470,8 @@ def run_spark_analysis(args):
             'top_categories': top_categories_list,
             'forecasts': forecasts,
             'seller_performance': seller_clusters,
-            'recommendations': recommendations
+            'recommendations': recommendations,
+            'metrics': metrics
         }
         
     finally:
@@ -413,6 +540,22 @@ def main():
             report.append(f"- {row['product_category']}: Reorder at {row['reorder_point']:.1f} units, Safety stock: {row['safety_stock']:.1f} units")
     
     report.append("")
+    
+    # Add performance metrics if available
+    if 'performance_metrics' in results:
+        report.append("#### Supply Chain Performance Metrics")
+        metrics = results['performance_metrics']
+        if 'avg_delivery_days' in metrics:
+            report.append(f"- Average Delivery Time: {metrics['avg_delivery_days']:.1f} days")
+        if 'on_time_delivery_rate' in metrics:
+            report.append(f"- On-Time Delivery Rate: {metrics['on_time_delivery_rate']:.1f}%")
+        if 'avg_processing_time' in metrics:
+            report.append(f"- Average Order Processing Time: {metrics['avg_processing_time']:.1f} days")
+        if 'average_order_value' in metrics:
+            report.append(f"- Average Order Value: ${metrics['average_order_value']:.2f}")
+        
+        report.append("")
+    
     report.append("### Visualization Files")
     
     # List output files

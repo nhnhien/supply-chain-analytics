@@ -1,7 +1,8 @@
 import React from 'react';
 import { 
   Grid, Paper, Typography, Box, Card, CardContent, 
-  CardHeader, Divider, List, ListItem, ListItemText
+  CardHeader, Divider, List, ListItem, ListItemText,
+  Avatar, Tooltip
 } from '@mui/material';
 import { 
   TrendingUp as TrendingUpIcon,
@@ -9,30 +10,87 @@ import {
   Report as ReportIcon,
   CheckCircle as CheckCircleIcon,
   LocalShipping as ShippingIcon,
-  Inventory as InventoryIcon
+  Inventory as InventoryIcon,
+  Info as InfoIcon
 } from '@mui/icons-material';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer } from 'recharts';
 
 // Import custom components
-import KPICard from '../components/KPICard';
 import TopCategoriesChart from '../components/TopCategoriesChart';
 import SellerPerformanceChart from '../components/SellerPerformanceChart';
+
+// KPI Card Component with estimated flag
+const KPICard = ({ title, value, icon, color = "#1976d2", trend = null, isEstimated = false }) => {
+  return (
+    <Card elevation={2} sx={{ height: '100%' }}>
+      <CardContent>
+        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <Box>
+            <Typography variant="body2" color="text.secondary" gutterBottom>
+              {title}
+              {isEstimated && (
+                <Tooltip title="Value is estimated based on available data">
+                  <InfoIcon fontSize="small" sx={{ ml: 1, verticalAlign: 'middle', color: 'warning.main' }} />
+                </Tooltip>
+              )}
+            </Typography>
+            <Typography variant="h5" component="div">
+              {value}
+            </Typography>
+            {trend && (
+              <Typography 
+                variant="caption" 
+                color={trend === 'up' ? 'success.main' : trend === 'down' ? 'error.main' : 'text.secondary'}
+              >
+                {trend === 'up' ? '↑ ' : trend === 'down' ? '↓ ' : ''}
+                {trend !== 'flat' && 'vs. last period'}
+              </Typography>
+            )}
+          </Box>
+          <Avatar 
+            sx={{ 
+              bgcolor: color, 
+              width: 48, 
+              height: 48,
+              boxShadow: 1
+            }}
+          >
+            {icon}
+          </Avatar>
+        </Box>
+      </CardContent>
+    </Card>
+  );
+};
 
 const DashboardPage = ({ data }) => {
   if (!data) {
     return <Typography>No dashboard data available</Typography>;
   }
   
-  const { demandData, categories, forecasts, sellerPerformance, kpis, recommendations } = data;
+  // Destructure with default values to prevent undefined errors
+  const { 
+    demandData = [], 
+    categories = { topCategories: [], categoryData: {} }, 
+    forecasts = { performanceMetrics: [] }, 
+    sellerPerformance = { clusters: [] }, 
+    kpis = {}, 
+    recommendations = { inventory: [] } 
+  } = data;
   
-  // Format KPI display values
+  // Check if kpis object exists
+  if (!kpis) {
+    return <Typography>No KPI data available</Typography>;
+  }
+  
+  // Format KPI display values with null checks
   const formattedKPIs = {
-    processingTime: kpis.avg_processing_time.toFixed(1),
-    forecastGrowth: kpis.forecast_growth.toFixed(1),
-    onTimeDelivery: kpis.on_time_delivery.toFixed(1),
-    perfectOrderRate: kpis.perfect_order_rate.toFixed(1),
-    inventoryTurnover: kpis.inventory_turnover.toFixed(1),
-    totalDemand: new Intl.NumberFormat().format(kpis.total_demand)
+    processingTime: kpis.avg_processing_time !== undefined ? kpis.avg_processing_time.toFixed(1) : 'N/A',
+    forecastGrowth: kpis.forecast_growth !== undefined ? kpis.forecast_growth.toFixed(1) : 'N/A',
+    onTimeDelivery: kpis.on_time_delivery !== undefined ? kpis.on_time_delivery.toFixed(1) : 'N/A',
+    perfectOrderRate: kpis.perfect_order_rate !== undefined ? kpis.perfect_order_rate.toFixed(1) : 'N/A',
+    inventoryTurnover: kpis.inventory_turnover !== undefined ? kpis.inventory_turnover.toFixed(1) : 'N/A',
+    totalDemand: kpis.total_demand !== undefined ? new Intl.NumberFormat().format(kpis.total_demand) : 'N/A'
   };
   
   return (
@@ -117,7 +175,7 @@ const DashboardPage = ({ data }) => {
                   }}
                 />
                 <YAxis />
-                <Tooltip 
+                <RechartsTooltip 
                   formatter={(value) => new Intl.NumberFormat().format(value)}
                   labelFormatter={(label) => {
                     if (label instanceof Date) {
@@ -127,12 +185,12 @@ const DashboardPage = ({ data }) => {
                   }}
                 />
                 <Legend />
-                {categories.topCategories.slice(0, 3).map((category, index) => (
+                {(categories.topCategories || []).slice(0, 3).map((category, index) => (
                   <Line 
                     key={category}
                     type="monotone" 
                     dataKey="count"
-                    data={categories.categoryData[category]}
+                    data={categories.categoryData && categories.categoryData[category] ? categories.categoryData[category] : []}
                     name={category}
                     stroke={['#8884d8', '#82ca9d', '#ffc658', '#ff8042', '#a4de6c'][index % 5]}
                     activeDot={{ r: 8 }}
@@ -164,17 +222,19 @@ const DashboardPage = ({ data }) => {
             </Typography>
             <Box sx={{ flexGrow: 1, overflow: 'auto' }}>
               <List>
-                {forecasts.performanceMetrics.slice(0, 5).map((forecast) => (
-                  <ListItem key={forecast.category} divider>
+                {(forecasts.performanceMetrics || []).slice(0, 5).map((forecast) => (
+                  <ListItem key={forecast?.category || 'unknown'} divider>
                     <ListItemText 
-                      primary={forecast.category} 
-                      secondary={`MAPE: ${forecast.mape?.toFixed(2)}%, Growth: ${forecast.growth_rate?.toFixed(2)}%`} 
+                      primary={forecast?.category || 'Unknown Category'} 
+                      secondary={`MAPE: ${forecast?.mape != null ? forecast.mape.toFixed(2) : 'N/A'}%, Growth: ${forecast?.growth_rate != null ? forecast.growth_rate.toFixed(2) : 'N/A'}%`} 
                     />
-                    {forecast.growth_rate > 0 ? (
-                      <TrendingUpIcon style={{ color: 'green' }} />
-                    ) : (
-                      <TrendingDownIcon style={{ color: 'red' }} />
-                    )}
+                    {forecast?.growth_rate != null ? (
+                      forecast.growth_rate > 0 ? (
+                        <TrendingUpIcon style={{ color: 'green' }} />
+                      ) : (
+                        <TrendingDownIcon style={{ color: 'red' }} />
+                      )
+                    ) : null}
                   </ListItem>
                 ))}
               </List>
@@ -200,13 +260,15 @@ const DashboardPage = ({ data }) => {
             </Typography>
             <Box sx={{ flexGrow: 1, overflow: 'auto' }}>
               <List>
-                {recommendations.inventory.slice(0, 5).map((rec, index) => (
+                {(recommendations.inventory || []).slice(0, 5).map((rec, index) => (
                   <ListItem key={index} divider>
                     <ListItemText 
-                      primary={rec.product_category || rec.category} 
+                      primary={rec?.product_category || rec?.category || 'Unknown Category'} 
                       secondary={
-                        rec.recommendation || 
-                        `Reorder at ${rec.reorder_point?.toFixed(0)} units, Safety stock: ${rec.safety_stock?.toFixed(0)} units`
+                        rec?.recommendation || 
+                        (rec?.reorder_point != null && rec?.safety_stock != null) ?
+                          `Reorder at ${rec.reorder_point.toFixed(0)} units, Safety stock: ${rec.safety_stock.toFixed(0)} units` :
+                          'No recommendation available'
                       } 
                     />
                   </ListItem>

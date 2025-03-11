@@ -201,7 +201,7 @@ def analyze_seller_efficiency(supply_chain):
                              avg("delivery_days").alias("avg_delivery_days"),
                              sum("price").alias("total_sales"))
                         .orderBy(col("total_sales").desc())
-                        .limit(1000))  # Limit to top 1000 sellers to avoid memory issues
+                        .limit(1000))  # Limit to top 1000 sellers
         
         # Cache the result to avoid recomputation
         seller_metrics.cache()
@@ -257,44 +257,150 @@ def analyze_seller_efficiency(supply_chain):
         print(f"Error in seller efficiency analysis: {e}")
         print("Falling back to simplified analysis")
         
-        # Create dummy dataframes for a graceful fallback
-        seller_metrics_pd = pd.DataFrame({
-            'seller_id': ['S001', 'S002', 'S003'],
-            'order_count': [100, 75, 50],
-            'avg_processing_time': [2.5, 3.2, 4.1],
-            'avg_delivery_days': [5.0, 6.2, 7.5],
-            'total_sales': [10000.0, 7500.0, 5000.0],
-            'prediction': [0, 1, 2]
+        return handle_seller_analysis_fallback(supply_chain)
+
+def handle_seller_analysis_fallback(supply_chain):
+    """
+    Handle fallback for seller analysis when primary method fails
+    """
+    try:
+        print("Attempting data-driven fallback analysis...")
+        
+        # Try a simpler aggregation approach
+        basic_seller_metrics = (supply_chain
+                              .groupBy("seller_id")
+                              .agg(count("order_id").alias("order_count"),
+                                   sum("price").alias("total_sales"))
+                              .filter(col("order_count") > 0)
+                              .orderBy(col("total_sales").desc())
+                              .limit(100))
+        
+        # Get actual values for processing time and delivery days if available
+        # otherwise use reasonable defaults
+        avg_metrics = supply_chain.agg(
+            avg("processing_time").alias("avg_processing_time"),
+            avg("delivery_days").alias("avg_delivery_days")
+        ).collect()[0]
+        
+        avg_processing_time = avg_metrics["avg_processing_time"] 
+        if avg_processing_time is None or pd.isna(avg_processing_time):
+            avg_processing_time = 1.0  # Default value
+            
+        avg_delivery_days = avg_metrics["avg_delivery_days"]
+        if avg_delivery_days is None or pd.isna(avg_delivery_days):
+            avg_delivery_days = 7.0  # Default value
+            
+        # Convert to pandas for easier processing
+        seller_metrics_pd = basic_seller_metrics.toPandas()
+        
+        if len(seller_metrics_pd) == 0:
+            print("No seller data available. Creating minimal dataset for visualization.")
+            # Create a minimal dataset for visualization purposes
+            seller_metrics_pd = pd.DataFrame({
+                'seller_id': [f"S{i:03d}" for i in range(1, 4)],
+                'order_count': [0, 0, 0],
+                'total_sales': [0.0, 0.0, 0.0],
+                'avg_processing_time': [avg_processing_time, avg_processing_time, avg_processing_time],
+                'avg_delivery_days': [avg_delivery_days, avg_delivery_days, avg_delivery_days],
+                'prediction': [0, 1, 2]
+            })
+        else:
+            # Add missing columns using median values
+            seller_metrics_pd['avg_processing_time'] = avg_processing_time
+            seller_metrics_pd['avg_delivery_days'] = avg_delivery_days
+            
+            # Assign clusters based on total sales (tertiles)
+            sales_tertiles = pd.qcut(seller_metrics_pd['total_sales'], 3, labels=[0, 1, 2])
+            seller_metrics_pd['prediction'] = sales_tertiles
+        
+        # Calculate cluster centers
+        cluster_centers = seller_metrics_pd.groupby('prediction').agg({
+            'total_sales': 'mean',
+            'avg_processing_time': 'mean',
+            'avg_delivery_days': 'mean',
+            'order_count': 'mean'
         })
         
-        cluster_centers = pd.DataFrame({
-            'total_sales': [10000.0, 7500.0, 5000.0],
-            'avg_processing_time': [2.5, 3.2, 4.1],
-            'avg_delivery_days': [5.0, 6.2, 7.5],
-            'order_count': [100, 75, 50]
-        }, index=[0, 1, 2])
+        # Create performance ranking
+        performance_ranking = cluster_centers.copy()
+        performance_ranking['sales_rank'] = performance_ranking['total_sales'].rank(ascending=False)
+        performance_ranking['speed_rank'] = performance_ranking['avg_processing_time'].rank()
+        performance_ranking['overall_rank'] = performance_ranking['sales_rank'] + performance_ranking['speed_rank']
+        performance_ranking['performance'] = performance_ranking['overall_rank'].rank().map({
+            1.0: 'High Performer',
+            2.0: 'Medium Performer',
+            3.0: 'Low Performer'
+        })
         
-        performance_ranking = pd.DataFrame({
-            'total_sales': [10000.0, 7500.0, 5000.0],
-            'avg_processing_time': [2.5, 3.2, 4.1],
-            'avg_delivery_days': [5.0, 6.2, 7.5],
-            'order_count': [100, 75, 50],
-            'sales_rank': [1.0, 2.0, 3.0],
-            'speed_rank': [1.0, 2.0, 3.0],
-            'overall_rank': [2.0, 4.0, 6.0],
-            'performance': ['High Performer', 'Medium Performer', 'Low Performer']
-        }, index=[0, 1, 2])
+        # Convert back to a Spark DataFrame
+        seller_data = [(row['seller_id'], 
+                       int(row['order_count']), 
+                       float(row['avg_processing_time']), 
+                       float(row['avg_delivery_days']), 
+                       float(row['total_sales'])) 
+                      for _, row in seller_metrics_pd.iterrows()]
         
-        # Create a dummy Spark DataFrame as a placeholder
-        dummy_data = [("S001", 100, 2.5, 5.0, 10000.0)]
-        dummy_schema = StructType([
+        schema = StructType([
             StructField("seller_id", StringType(), True),
             StructField("order_count", IntegerType(), True),
             StructField("avg_processing_time", FloatType(), True),
             StructField("avg_delivery_days", FloatType(), True),
             StructField("total_sales", FloatType(), True)
         ])
-        seller_metrics = supply_chain.sparkSession.createDataFrame(dummy_data, dummy_schema)
+        
+        seller_metrics = supply_chain.sparkSession.createDataFrame(seller_data, schema)
+        
+        # Add a warning to the log file
+        print("WARNING: Using simplified seller analysis. Results may not reflect detailed clustering.")
+        
+        return seller_metrics, seller_metrics_pd, cluster_centers, performance_ranking
+        
+    except Exception as e:
+        print(f"Fallback analysis also failed: {e}")
+        print("Creating minimal dataset for visualization")
+        
+        # Create minimal dummy data for visualization purposes only
+        # This is a last resort when all data processing fails
+        minimal_schema = StructType([
+            StructField("seller_id", StringType(), True),
+            StructField("order_count", IntegerType(), True),
+            StructField("avg_processing_time", FloatType(), True),
+            StructField("avg_delivery_days", FloatType(), True),
+            StructField("total_sales", FloatType(), True)
+        ])
+        
+        dummy_data = [("Unknown001", 0, 1.0, 7.0, 0.0)]
+        seller_metrics = supply_chain.sparkSession.createDataFrame(dummy_data, minimal_schema)
+        
+        seller_metrics_pd = pd.DataFrame({
+            'seller_id': ["Unknown001", "Unknown002", "Unknown003"],
+            'order_count': [0, 0, 0],
+            'avg_processing_time': [1.0, 1.5, 2.0],
+            'avg_delivery_days': [7.0, 7.0, 7.0],
+            'total_sales': [0.0, 0.0, 0.0],
+            'prediction': [0, 1, 2]
+        })
+        
+        cluster_centers = pd.DataFrame({
+            'total_sales': [0.0, 0.0, 0.0],
+            'avg_processing_time': [1.0, 1.5, 2.0],
+            'avg_delivery_days': [7.0, 7.0, 7.0],
+            'order_count': [0, 0, 0]
+        }, index=[0, 1, 2])
+        
+        performance_ranking = pd.DataFrame({
+            'total_sales': [0.0, 0.0, 0.0],
+            'avg_processing_time': [1.0, 1.5, 2.0],
+            'avg_delivery_days': [7.0, 7.0, 7.0],
+            'order_count': [0, 0, 0],
+            'sales_rank': [1.0, 2.0, 3.0],
+            'speed_rank': [1.0, 2.0, 3.0],
+            'overall_rank': [2.0, 4.0, 6.0],
+            'performance': ['High Performer', 'Medium Performer', 'Low Performer']
+        }, index=[0, 1, 2])
+        
+        print("ERROR: Seller analysis failed completely. Visualization will use placeholder data.")
+        print("Please check input data quality and format.")
         
         return seller_metrics, seller_metrics_pd, cluster_centers, performance_ranking
 def analyze_geographical_patterns(supply_chain):

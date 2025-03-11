@@ -1,5 +1,5 @@
 # Supply Chain Analytics for Demand Forecasting
-## Report Generated on 2025-03-11 00:21:13
+## Report Generated on 2025-03-11 09:58:52
 
 ### Dataset Summary
 - Data source: ./data
@@ -20,18 +20,23 @@
 - computers_accessories: Avg. forecasted demand nan units/month
 
 #### Inventory Recommendations
-- toys: Reorder at 11013.9 units, Safety stock: 7509.5 units
-- health_beauty: Reorder at 1303.1 units, Safety stock: 888.5 units
-- computers_accessories: Reorder at 885.9 units, Safety stock: 604.0 units
+- toys: Reorder at 14017.7 units, Safety stock: 10513.2 units
+- health_beauty: Reorder at 1444.6 units, Safety stock: 1029.9 units
+- computers_accessories: Reorder at 1127.6 units, Safety stock: 845.7 units
+
+#### Supply Chain Performance Metrics
+- Average Delivery Time: 7.0 days
+- On-Time Delivery Rate: nan%
+- Average Order Processing Time: 0.4 days
 
 ### Visualization Files
+- delivery_performance.csv
 - demand_trends.png
 - forecast_report.csv
 - heatmap_computers_accessories.png
 - heatmap_health_beauty.png
 - heatmap_toys.png
 - monthly_demand.csv
-- reorder_recommendations.csv
-- reorder_recommendations.png
-- seller_clusters.csv
-- state_metrics.csv
+- performance_metrics.csv
+- processed_orders.csv
+- processed_order_items.csv
