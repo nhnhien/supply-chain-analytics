@@ -28,6 +28,7 @@ async function loadCsvData(filePath, mockDataGenerator) {
         header: true,
         dynamicTyping: true,  // This helps but doesn't handle all cases
         skipEmptyLines: true, // Skip empty lines in the CSV
+        delimitersToGuess: [',', '\t', '|', ';'], // Try to detect different delimiters
         // Handle values that should be parsed as special cases
         transformHeader: header => header.trim(),
         transform: (value, field) => {
@@ -50,15 +51,22 @@ async function loadCsvData(filePath, mockDataGenerator) {
           return value;
         },
         complete: (results) => {
+          // Check if parsing resulted in error
+          if (results.errors && results.errors.length > 0) {
+            console.warn("CSV parsing had errors:", results.errors);
+          }
+          
           // Process the data further to ensure correct types
           const processedData = results.data
             .filter(row => Object.keys(row).length > 1) // Filter out empty rows
             .map(row => {
               // Process numeric fields that might still be strings
               const numericFields = [
-                'avg_historical_demand', 'forecast_demand', 'growth_rate', 
-                'mape', 'rmse', 'mae', 'order_count', 'count',
-                'avg_processing_time', 'avg_delivery_days', 'total_sales'
+                'avg_historical_demand', 'forecast_demand', 'min_forecast', 'max_forecast',
+                'growth_rate', 'mape', 'rmse', 'mae', 'order_count', 'count',
+                'avg_processing_time', 'avg_delivery_days', 'total_sales',
+                'safety_stock', 'reorder_point', 'next_month_forecast',
+                'on_time_delivery', 'perfect_order_rate', 'inventory_turnover'
               ];
               
               for (const field of numericFields) {
@@ -67,6 +75,24 @@ async function loadCsvData(filePath, mockDataGenerator) {
                   if (!isNaN(parsed)) {
                     row[field] = parsed;
                   }
+                }
+              }
+              
+              // Ensure date fields are proper Date objects when possible
+              if (row.date && typeof row.date === 'string') {
+                try {
+                  row.date = new Date(row.date);
+                } catch (error) {
+                  console.warn(`Could not parse date: ${row.date}`);
+                }
+              }
+              
+              // If both year and month fields exist, create a date field if not already present
+              if (!row.date && (row.order_year || row.year) && (row.order_month || row.month)) {
+                const year = parseInt(row.order_year || row.year);
+                const month = parseInt(row.order_month || row.month) - 1; // JavaScript months are 0-indexed
+                if (!isNaN(year) && !isNaN(month)) {
+                  row.date = new Date(year, month, 1);
                 }
               }
               
@@ -360,7 +386,8 @@ function createMockReorderRecommendations() {
       avg_monthly_demand: baseValue,
       safety_stock: safetyStock,
       reorder_point: reorderPoint,
-      next_month_forecast: nextMonthForecast
+      next_month_forecast: nextMonthForecast,
+      growth_rate: growthRate * 100 // Convert to percentage
     };
   });
 }
@@ -459,6 +486,14 @@ export async function loadDashboardData() {
     // Calculate KPIs (now returns directly without API fetch which was causing 404)
     const kpis = calculateKPIsDirectly(monthlyDemand, sellerClusters, forecastReport);
     
+    // Get top category by state data if available
+    let topCategoryByState = [];
+    try {
+      topCategoryByState = await loadCsvData('/data/top_category_by_state.csv', () => []);
+    } catch (error) {
+      console.warn('Could not load top category by state data');
+    }
+    
     return {
       demandData: processedDemand,
       categories: {
@@ -474,7 +509,8 @@ export async function loadDashboardData() {
         metrics: extractSellerMetrics(sellerClusters)
       },
       geography: {
-        stateMetrics: stateMetrics
+        stateMetrics: stateMetrics,
+        topCategoryByState: topCategoryByState
       },
       recommendations: {
         inventory: reorderRecommendations
@@ -488,6 +524,7 @@ export async function loadDashboardData() {
     const mockMonthlyDemand = createMockMonthlyDemand();
     const mockForecastReport = createMockForecastReport();
     const mockSellerClusters = createMockSellerClusters();
+    const mockStateMetrics = createMockStateMetrics();
     
     return {
       demandData: processDemandData(mockMonthlyDemand),
@@ -504,7 +541,8 @@ export async function loadDashboardData() {
         metrics: extractSellerMetrics(mockSellerClusters)
       },
       geography: {
-        stateMetrics: createMockStateMetrics()
+        stateMetrics: mockStateMetrics,
+        topCategoryByState: [] // No mock data for this
       },
       recommendations: {
         inventory: createMockReorderRecommendations()
@@ -520,26 +558,36 @@ export async function loadDashboardData() {
  * @returns {Array} - Processed demand data
  */
 function processDemandData(data) {
+  if (!Array.isArray(data)) {
+    console.warn('processDemandData received non-array data');
+    return [];
+  }
+  
   // Ensure date field exists
   const processedData = data.map(row => {
+    if (!row) return null;
+    
+    // Create a copy to avoid mutating the original
+    const processedRow = {...row};
+    
     // Create date from year and month if not already present
-    if (!row.date) {
-      const year = row.year || row.order_year;
-      const month = row.month || row.order_month;
+    if (!processedRow.date) {
+      const year = processedRow.year || processedRow.order_year;
+      const month = processedRow.month || processedRow.order_month;
       if (year && month) {
-        row.date = new Date(year, month - 1, 1);
+        processedRow.date = new Date(parseInt(year), parseInt(month) - 1, 1);
       }
-    } else if (typeof row.date === 'string') {
-      row.date = new Date(row.date);
+    } else if (typeof processedRow.date === 'string') {
+      processedRow.date = new Date(processedRow.date);
     }
     
     // Ensure count field exists
-    if (!row.count && row.order_count) {
-      row.count = row.order_count;
+    if (!processedRow.count && processedRow.order_count) {
+      processedRow.count = processedRow.order_count;
     }
     
-    return row;
-  });
+    return processedRow;
+  }).filter(row => row !== null);
   
   return processedData;
 }
@@ -551,19 +599,26 @@ function processDemandData(data) {
  * @returns {Array} - Array of top category names
  */
 function getTopCategories(data, limit = 5) {
+  if (!Array.isArray(data)) {
+    console.warn('getTopCategories received non-array data');
+    return [];
+  }
+  
   // Group by category and sum the demand
   const categoryTotals = {};
   
   data.forEach(row => {
+    if (!row) return;
+    
     const category = row.product_category_name;
-    const count = row.count || row.order_count || 0;
+    const count = parseFloat(row.count || row.order_count || 0);
     
     if (category && !categoryTotals[category]) {
       categoryTotals[category] = 0;
     }
     
     if (category) {
-      categoryTotals[category] += count;
+      categoryTotals[category] += isNaN(count) ? 0 : count;
     }
   });
   
@@ -580,9 +635,16 @@ function getTopCategories(data, limit = 5) {
  * @returns {Object} - Object with category names as keys and arrays of data as values
  */
 function groupByCategory(data) {
+  if (!Array.isArray(data)) {
+    console.warn('groupByCategory received non-array data');
+    return {};
+  }
+  
   const grouped = {};
   
   data.forEach(row => {
+    if (!row) return;
+    
     const category = row.product_category_name;
     
     if (category && !grouped[category]) {
@@ -603,12 +665,17 @@ function groupByCategory(data) {
  * @returns {Array} - Array with performance metrics
  */
 function extractForecastPerformance(forecastReport) {
-  return forecastReport.map(row => ({
+  if (!Array.isArray(forecastReport)) {
+    console.warn('extractForecastPerformance received non-array data');
+    return [];
+  }
+  
+  return forecastReport.filter(row => row && row.category).map(row => ({
     category: row.category || row.product_category,
-    mape: row.mape,
-    rmse: row.rmse,
-    mae: row.mae,
-    growth_rate: row.growth_rate
+    mape: parseFloat(row.mape) || null,
+    rmse: parseFloat(row.rmse) || null,
+    mae: parseFloat(row.mae) || null,
+    growth_rate: parseFloat(row.growth_rate) || 0
   }));
 }
 
@@ -618,10 +685,17 @@ function extractForecastPerformance(forecastReport) {
  * @returns {Object} - Object with seller metrics
  */
 function extractSellerMetrics(sellerClusters) {
+  if (!Array.isArray(sellerClusters)) {
+    console.warn('extractSellerMetrics received non-array data');
+    return { clusterMetrics: {}, sellerCount: 0 };
+  }
+  
   // Calculate average metrics by cluster
   const clusterMetrics = {};
   
   sellerClusters.forEach(seller => {
+    if (!seller) return;
+    
     const cluster = seller.prediction;
     
     if (cluster === undefined || cluster === null) return;
@@ -631,14 +705,16 @@ function extractSellerMetrics(sellerClusters) {
         count: 0,
         total_sales: 0,
         avg_processing_time: 0,
-        avg_delivery_days: 0
+        avg_delivery_days: 0,
+        order_count: 0
       };
     }
     
     clusterMetrics[cluster].count += 1;
-    clusterMetrics[cluster].total_sales += seller.total_sales || 0;
-    clusterMetrics[cluster].avg_processing_time += seller.avg_processing_time || 0;
-    clusterMetrics[cluster].avg_delivery_days += seller.avg_delivery_days || 0;
+    clusterMetrics[cluster].total_sales += parseFloat(seller.total_sales) || 0;
+    clusterMetrics[cluster].avg_processing_time += parseFloat(seller.avg_processing_time) || 0;
+    clusterMetrics[cluster].avg_delivery_days += parseFloat(seller.avg_delivery_days) || 0;
+    clusterMetrics[cluster].order_count += parseFloat(seller.order_count) || 0;
   });
   
   // Calculate averages
@@ -648,6 +724,7 @@ function extractSellerMetrics(sellerClusters) {
       metrics.avg_sales = metrics.total_sales / metrics.count;
       metrics.avg_processing_time = metrics.avg_processing_time / metrics.count;
       metrics.avg_delivery_days = metrics.avg_delivery_days / metrics.count;
+      metrics.avg_order_count = metrics.order_count / metrics.count;
     }
   });
   
@@ -669,12 +746,17 @@ function calculateKPIsDirectly(demandData, sellerData, forecastData) {
   let totalProcessingTime = 0;
   let sellerCount = 0;
   
-  sellerData.forEach(seller => {
-    if (seller.avg_processing_time) {
-      totalProcessingTime += seller.avg_processing_time;
-      sellerCount++;
-    }
-  });
+  if (Array.isArray(sellerData)) {
+    sellerData.forEach(seller => {
+      if (seller && seller.avg_processing_time !== undefined) {
+        const processingTime = parseFloat(seller.avg_processing_time);
+        if (!isNaN(processingTime)) {
+          totalProcessingTime += processingTime;
+          sellerCount++;
+        }
+      }
+    });
+  }
   
   const avgProcessingTime = sellerCount > 0 ? totalProcessingTime / sellerCount : 0;
   
@@ -682,33 +764,48 @@ function calculateKPIsDirectly(demandData, sellerData, forecastData) {
   let totalGrowthRate = 0;
   let forecastCount = 0;
   
-  forecastData.forEach(forecast => {
-    if (forecast.growth_rate !== null && forecast.growth_rate !== undefined) {
-      totalGrowthRate += parseFloat(forecast.growth_rate);
-      forecastCount++;
-    }
-  });
+  if (Array.isArray(forecastData)) {
+    forecastData.forEach(forecast => {
+      if (forecast && forecast.growth_rate !== null && forecast.growth_rate !== undefined) {
+        const growthRate = parseFloat(forecast.growth_rate);
+        if (!isNaN(growthRate)) {
+          totalGrowthRate += growthRate;
+          forecastCount++;
+        }
+      }
+    });
+  }
   
   const avgGrowthRate = forecastCount > 0 ? totalGrowthRate / forecastCount : 0;
   
   // Total demand
   let totalDemand = 0;
   
-  demandData.forEach(row => {
-    totalDemand += parseFloat(row.count || row.order_count || 0);
-  });
+  if (Array.isArray(demandData)) {
+    demandData.forEach(row => {
+      if (row) {
+        const count = parseFloat(row.count || row.order_count || 0);
+        if (!isNaN(count)) {
+          totalDemand += count;
+        }
+      }
+    });
+  }
   
   // Calculate on-time delivery from seller data if available
   let onTimeDelivery = 85.0; // Default to industry benchmark
   
-  if (sellerData && sellerData.some(seller => seller.on_time_delivery !== undefined)) {
+  if (Array.isArray(sellerData) && sellerData.some(seller => seller && seller.on_time_delivery !== undefined)) {
     let totalOnTime = 0;
     let onTimeCount = 0;
     
     sellerData.forEach(seller => {
-      if (seller.on_time_delivery !== undefined) {
-        totalOnTime += seller.on_time_delivery;
-        onTimeCount++;
+      if (seller && seller.on_time_delivery !== undefined) {
+        const onTime = parseFloat(seller.on_time_delivery);
+        if (!isNaN(onTime)) {
+          totalOnTime += onTime;
+          onTimeCount++;
+        }
       }
     });
     
@@ -717,15 +814,22 @@ function calculateKPIsDirectly(demandData, sellerData, forecastData) {
     }
   }
   
-  // Return directly calculated KPIs
+  // Perfect order rate calculation - typically 80-90% of on-time delivery rate
+  const perfectOrderRate = onTimeDelivery * 0.9;
+  
+  // Inventory turnover - industry benchmark for e-commerce
+  const inventoryTurnover = 8.0;
+  
+  // Return calculated KPIs
   return {
     avg_processing_time: avgProcessingTime,
     forecast_growth: avgGrowthRate,
     total_demand: totalDemand,
     on_time_delivery: onTimeDelivery,
-    perfect_order_rate: 80.0, // Industry benchmark
-    inventory_turnover: 8.0, // Industry benchmark
-    estimated_fields: ['perfect_order_rate', 'inventory_turnover']
+    perfect_order_rate: perfectOrderRate,
+    inventory_turnover: inventoryTurnover,
+    // Flag estimated values for transparency in the UI
+    estimated_fields: ['on_time_delivery', 'perfect_order_rate', 'inventory_turnover']
   };
 }
 

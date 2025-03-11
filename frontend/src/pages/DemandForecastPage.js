@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { 
   Grid, Paper, Typography, Box, Card, CardContent, 
-  CardHeader, Divider, List, ListItem, ListItemText,
   FormControl, InputLabel, Select, MenuItem,
   Alert, AlertTitle
 } from '@mui/material';
@@ -84,7 +83,7 @@ const ForecastInterpretation = ({ forecast }) => {
 };
 
 /**
- * Demand Forecast Page Component with enhanced data handling
+ * Demand Forecast Page Component with enhanced data handling and visualization
  * 
  * @param {Object} props Component props
  * @param {Object} props.data Forecast data
@@ -94,161 +93,7 @@ const DemandForecastPage = ({ data }) => {
   const [forecastData, setForecastData] = useState([]);
   const [performanceMetrics, setPerformanceMetrics] = useState([]);
   const [forecastNote, setForecastNote] = useState('');
-  
-  // Initialize data and select first category
-  useEffect(() => {
-    if (data && data.forecastReport && data.forecastReport.length > 0) {
-      // Set the initial category selection
-      const validForecasts = data.forecastReport.filter(f => f && f.category);
-      if (validForecasts.length > 0) {
-        setSelectedCategory(validForecasts[0].category);
-      }
-      
-      // Process performance metrics with null checks and validations
-      if (data.performanceMetrics) {
-        setPerformanceMetrics(
-          data.performanceMetrics
-            .filter(metric => metric != null && metric.category != null) // Filter out null metrics
-            .map(metric => {
-              // Ensure numeric values
-              const mape = parseNumericValue(metric.mape);
-              const normalizedMape = mape > 100 ? 100 : mape; // Cap MAPE at 100% for coloring
-              
-              return {
-                ...metric,
-                mape: mape,
-                mapeColor: (mape != null) 
-                  ? (normalizedMape < 10 ? '#4caf50' : normalizedMape < 20 ? '#ff9800' : '#f44336')
-                  : '#cccccc' // Default color when mape is null
-              }
-            })
-        );
-      }
-    }
-  }, [data]);
-  
-  // Update forecast data when category changes
-  useEffect(() => {
-    if (selectedCategory && data) {
-      // Get forecast data and category data with proper validations
-      const forecastReport = getValidArray(data.forecastReport);
-      const categoryData = getCategoryData(data, selectedCategory);
-      
-      // Find the selected category forecast
-      const categoryForecast = forecastReport.find(
-        forecast => forecast.category === selectedCategory
-      );
-      
-      if (categoryForecast) {
-        // Process historical data
-        const historicalPoints = processHistoricalData(categoryData);
-        
-        // Sort by date
-        historicalPoints.sort((a, b) => a.date - b.date);
-        
-        // Process forecast data
-        const forecastPoints = [];
-        
-        if (historicalPoints.length > 0) {
-          // Get the last historical data point
-          const lastHistoricalPoint = historicalPoints[historicalPoints.length - 1];
-          const lastDate = new Date(lastHistoricalPoint.date);
-          const lastValue = lastHistoricalPoint.value;
-          
-          // Get forecasted demand (use absolute value to ensure positive)
-          const forecastDemand = Math.abs(parseNumericValue(categoryForecast.forecast_demand, lastValue));
-          
-          // Calculate average monthly growth over forecast period (6 months)
-          // Calculate growth rate safely, keeping it within reasonable bounds
-          let growthRate = parseNumericValue(categoryForecast.growth_rate, 0);
-          growthRate = Math.max(Math.min(growthRate, 100), -100); // Limit to ±100%
-          
-          const monthlyGrowthRate = growthRate / 6; // Distribute growth over 6 months
-          
-          // Generate forecast points with safety checks
-          for (let i = 1; i <= 6; i++) {
-            const forecastDate = new Date(lastDate);
-            forecastDate.setMonth(forecastDate.getMonth() + i);
-            
-            // Start from last historical value and apply monthly growth
-            // With safety check to ensure positive values
-            const forecastValue = Math.max(lastValue * (1 + (monthlyGrowthRate / 100) * i), 0);
-            
-            // Get MAPE or use a default error percentage
-            const mape = parseNumericValue(categoryForecast.mape, 15);
-            
-            // Calculate confidence intervals with increasing uncertainty
-            const errorPercentage = mape / 100 * (1 + (i-1)/6); // Increasing uncertainty with time
-            const marginOfError = forecastValue * errorPercentage;
-            
-            forecastPoints.push({
-              date: forecastDate,
-              value: forecastValue,
-              lowerBound: Math.max(0, forecastValue - marginOfError),
-              upperBound: forecastValue + marginOfError,
-              type: 'forecast'
-            });
-          }
-        }
-        
-        // Combine historical and forecast data
-        const combinedData = [...historicalPoints, ...forecastPoints];
-        
-        // Add a note about estimation method if we had to generate the forecast
-        if (forecastPoints.length > 0) {
-          const hasForecastValues = categoryForecast.forecast_values && 
-                                   Array.isArray(categoryForecast.forecast_values) && 
-                                   categoryForecast.forecast_values.length > 0;
-                                   
-          if (!hasForecastValues) {
-            setForecastNote('Note: Forecast visualization is based on growth rate estimation. For precise values, please refer to the statistics below.');
-          } else {
-            setForecastNote('');
-          }
-        }
-        
-        setForecastData(combinedData);
-      }
-    }
-  }, [selectedCategory, data]);
-  
-  // Helper function to process historical data
-  const processHistoricalData = (categoryData) => {
-    return (categoryData || [])
-      .filter(point => point && (parseNumericValue(point.count) > 0 || parseNumericValue(point.order_count) > 0))
-      .map(point => {
-        // Handle date - ensure it's a valid Date object
-        let pointDate = point.date;
-        if (typeof pointDate === 'string') {
-          pointDate = new Date(pointDate);
-        } else if (!pointDate && (point.order_year || point.year) && (point.order_month || point.month)) {
-          pointDate = new Date(
-            parseInt(point.order_year || point.year), 
-            parseInt(point.order_month || point.month) - 1, 
-            1
-          );
-        }
-        
-        if (!pointDate || isNaN(pointDate.getTime())) {
-          // If date is still invalid, use current date as fallback
-          pointDate = new Date();
-        }
-        
-        return {
-          date: pointDate,
-          value: parseNumericValue(point.count || point.order_count, 0),
-          type: 'historical'
-        };
-      });
-  };
-  
-  // Helper function to get category data
-  const getCategoryData = (data, category) => {
-    if (data && data.categoryData && data.categoryData[category]) {
-      return data.categoryData[category];
-    }
-    return [];
-  };
+  const [hasVisualizationData, setHasVisualizationData] = useState(false);
   
   // Helper function to ensure we have an array
   const getValidArray = (arr) => {
@@ -265,24 +110,175 @@ const DemandForecastPage = ({ data }) => {
     return isNaN(parsed) ? defaultValue : parsed;
   };
   
-  // Show loading message if no data is available
-  if (!data) {
-    return <Typography>No forecast data available</Typography>;
+  // Initialize data and select first category
+  useEffect(() => {
+    if (data && data.forecastReport && data.forecastReport.length > 0) {
+      // Set the initial category selection
+      const validForecasts = getValidArray(data.forecastReport).filter(f => f && f.category);
+      if (validForecasts.length > 0) {
+        setSelectedCategory(validForecasts[0].category);
+      }
+      
+      // Process performance metrics with null checks and validations
+      if (data.performanceMetrics) {
+        setPerformanceMetrics(
+          getValidArray(data.performanceMetrics)
+            .filter(metric => metric != null && metric.category != null) // Filter out null metrics
+            .map(metric => {
+              // Ensure numeric values
+              const mape = parseNumericValue(metric.mape);
+              const normalizedMape = mape > 100 ? 100 : mape; // Cap MAPE at 100% for coloring
+              
+              return {
+                ...metric,
+                mape: mape,
+                mapeColor: (mape != null) 
+                  ? (normalizedMape < 10 ? '#4caf50' : normalizedMape < 20 ? '#ff9800' : '#f44336')
+                  : '#cccccc' // Default color when mape is null
+              };
+            })
+        );
+      }
+    }
+  }, [data]);
+  
+  // Get category data from data structure
+  const getCategoryData = (data, category) => {
+    if (data && data.categories && data.categories.categoryData && data.categories.categoryData[category]) {
+      return data.categories.categoryData[category];
+    }
+    return [];
+  };
+  
+  // Update forecast data when category changes
+// Update forecast data when category changes
+useEffect(() => {
+  if (selectedCategory && data) {
+    // Get forecast data and category data with proper validations
+    const forecastReport = getValidArray(data.forecastReport);
+    const categoryData = getCategoryData(data, selectedCategory);
+    
+    // Find the selected category forecast
+    const categoryForecast = forecastReport.find(
+      forecast => forecast.category === selectedCategory
+    );
+    
+    if (categoryForecast) {
+      // Check if we have visualization_data in the forecast
+      if (categoryForecast.visualization_data && 
+          Array.isArray(categoryForecast.visualization_data) && 
+          categoryForecast.visualization_data.length > 0) {
+        
+        // Use the provided visualization data
+        setForecastData(categoryForecast.visualization_data);
+        setHasVisualizationData(true);
+        setForecastNote('');
+      } else {
+        // Try to generate visualization data from historical data
+        const historicalData = processHistoricalData(categoryData);
+        
+        if (historicalData.length > 0) {
+          // Generate simple forecast points from historical trend
+          const forecastPoints = generateForecastPoints(historicalData, categoryForecast);
+          
+          // Combine historical and forecast data
+          const combinedData = [...historicalData, ...forecastPoints];
+          setForecastData(combinedData);
+          setHasVisualizationData(forecastPoints.length > 0);
+          
+          if (forecastPoints.length > 0) {
+            setForecastNote('Note: Forecast visualization is based on statistical trend estimation. For precise values, please refer to the statistics below.');
+          } else {
+            setForecastNote('');
+          }
+        } else {
+          // No historical data available
+          setForecastData([]);
+          setHasVisualizationData(false);
+          setForecastNote('');
+        }
+      }
+    } else {
+      // No forecast found for this category
+      setForecastData([]);
+      setHasVisualizationData(false);
+      setForecastNote('');
+    }
+  }
+}, [selectedCategory, data]);
+  
+  // Helper function to process historical data
+  // Helper function to process historical data
+const processHistoricalData = (categoryData) => {
+  return (categoryData || [])
+    .filter(point => point && (parseNumericValue(point.count) > 0 || parseNumericValue(point.order_count) > 0))
+    .map(point => {
+      // Handle date - ensure it's a valid Date object
+      let pointDate = point.date;
+      if (typeof pointDate === 'string') {
+        pointDate = new Date(pointDate);
+      } else if (!pointDate && (point.order_year || point.year) && (point.order_month || point.month)) {
+        pointDate = new Date(
+          parseInt(point.order_year || point.year), 
+          parseInt(point.order_month || point.month) - 1, 
+          1
+        );
+      }
+      
+      if (!pointDate || isNaN(pointDate.getTime())) {
+        // If date is still invalid, use current date as fallback
+        pointDate = new Date();
+      }
+      
+      return {
+        date: pointDate,
+        value: parseNumericValue(point.count || point.order_count, 0),
+        type: 'historical'
+      };
+    })
+    .sort((a, b) => a.date - b.date); // Sort by date
+};
+  
+// Helper function to generate forecast points from historical data and forecast statistics
+const generateForecastPoints = (historicalData, categoryForecast) => {
+  if (historicalData.length < 2) return [];
+  
+  // Get the last historical point
+  const lastPoint = historicalData[historicalData.length - 1];
+  
+  // Get growth rate from forecast
+  const growthRate = parseNumericValue(categoryForecast.growth_rate, 0) / 100; // Convert to decimal
+  
+  // Get forecast statistics for bounds calculation
+  const mape = parseNumericValue(categoryForecast.mape, 20) / 100; // Default to 20% if not available
+  
+  // Generate 6 forecast points
+  const forecastPoints = [];
+  for (let i = 1; i <= 6; i++) {
+    // Create date for this forecast point (add i months to last date)
+    const forecastDate = new Date(lastPoint.date);
+    forecastDate.setMonth(forecastDate.getMonth() + i);
+    
+    // Calculate forecast value based on growth rate
+    // With limit to ensure no negative values
+    const forecastValue = Math.max(lastPoint.value * (1 + (growthRate * i/6)), 0);
+    
+    // Calculate error bounds with increasing uncertainty over time
+    const errorFactor = mape * (1 + (i-1)/6); // Increasing uncertainty with time
+    const lowerBound = Math.max(forecastValue * (1 - errorFactor), 0);
+    const upperBound = forecastValue * (1 + errorFactor);
+    
+    forecastPoints.push({
+      date: forecastDate,
+      value: forecastValue,
+      lowerBound: lowerBound,
+      upperBound: upperBound,
+      type: 'forecast'
+    });
   }
   
-  const handleCategoryChange = (event) => {
-    setSelectedCategory(event.target.value);
-  };
-  
-  // Format date for display
-  const formatDate = (date) => {
-    if (!date) return '';
-    if (typeof date === 'string') date = new Date(date);
-    
-    if (isNaN(date.getTime())) return 'Invalid Date';
-    
-    return date.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
-  };
+  return forecastPoints;
+};
   
   // Get current category forecast for statistics panel
   const getCurrentCategoryForecast = () => {
@@ -304,9 +300,27 @@ const DemandForecastPage = ({ data }) => {
       });
   };
   
+  // Show loading message if no data is available
+  if (!data) {
+    return <Typography>No forecast data available</Typography>;
+  }
+  
+  const handleCategoryChange = (event) => {
+    setSelectedCategory(event.target.value);
+  };
+  
+  // Format date for display
+  const formatDate = (date) => {
+    if (!date) return '';
+    if (typeof date === 'string') date = new Date(date);
+    
+    if (isNaN(date.getTime())) return 'Invalid Date';
+    
+    return date.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+  };
+  
   const categoryForecasts = getCurrentCategoryForecast();
   const dataQuality = categoryForecasts && categoryForecasts[0] ? categoryForecasts[0].data_quality : null;
-  const hasNoForecastData = forecastData.length === 0;
   
   return (
     <Box>
@@ -361,7 +375,7 @@ const DemandForecastPage = ({ data }) => {
             )}
             
             <ResponsiveContainer width="100%" height="90%">
-              {!hasNoForecastData ? (
+              {hasVisualizationData && forecastData.length > 0 ? (
                 <LineChart
                   data={forecastData}
                   margin={{ top: 5, right: 30, left: 20, bottom: 30 }}

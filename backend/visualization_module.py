@@ -193,6 +193,8 @@ class SupplyChainVisualizer:
         Args:
             recommendations: DataFrame with reorder recommendations
         """
+        print(recommendations.columns)
+        print(recommendations.head())
         # Sort by reorder point (descending)
         sorted_recs = recommendations.sort_values('reorder_point', ascending=False)
         

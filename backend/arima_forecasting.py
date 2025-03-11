@@ -384,7 +384,7 @@ class DemandForecaster:
     
     def train_and_forecast(self, category, periods=6, use_best_params=True):
         """
-        Train ARIMA model and generate forecasts
+        Train ARIMA model and generate forecasts with improved visualization data
         
         Args:
             category: Product category to forecast
@@ -392,7 +392,7 @@ class DemandForecaster:
             use_best_params: Whether to use grid search for best parameters
             
         Returns:
-            Dictionary with forecast results
+            Dictionary with forecast results, including visualization data
         """
         if category not in self.category_data:
             print(f"Category '{category}' not found")
@@ -402,13 +402,25 @@ class DemandForecaster:
         if not count_column:
             print(f"No suitable numeric column found for {category}")
             return None
-            
+                
         ts = self.category_data[category][count_column]
+        
+        # Prepare historical data for visualization
+        historical_data = []
+        for date, value in zip(ts.index, ts.values):
+            historical_data.append({
+                'date': date,
+                'value': float(value),
+                'type': 'historical'
+            })
         
         # Check if we have enough data for forecasting (at least 4 points)
         if len(ts) < 4:
             print(f"Insufficient data points for {category}, need at least 4 data points")
-            return self._create_empty_forecast_results(category, ts)
+            result = self._create_empty_forecast_results(category, ts)
+            # Add visualization data
+            result['visualization_data'] = historical_data
+            return result
         
         # Determine ARIMA parameters
         if use_best_params:
@@ -449,17 +461,34 @@ class DemandForecaster:
                 
                 # Calculate error metrics with robust handling
                 try:
-                    mae = mean_absolute_error(test, forecast)
-                    rmse = np.sqrt(mean_squared_error(test, forecast))
+                    # Make sure forecast and test have the same index before calculation
+                    test_values = test.values if hasattr(test, 'values') else test
+                    forecast_values = forecast.values if hasattr(forecast, 'values') else forecast
                     
-                    # Robust MAPE calculation that handles zeros
-                    # Calculate MAPE only on non-zero actual values
-                    non_zero_indices = test > 0
-                    if np.any(non_zero_indices):
-                        mape = np.mean(np.abs((test[non_zero_indices] - forecast[non_zero_indices]) / test[non_zero_indices])) * 100
+                    if len(test_values) == len(forecast_values):
+                        mae = mean_absolute_error(test_values, forecast_values)
+                        rmse = np.sqrt(mean_squared_error(test_values, forecast_values))
+                        
+                        # Robust MAPE calculation that handles zeros
+                        # Calculate MAPE only on non-zero actual values
+                        non_zero_mask = np.array(test_values) > 0
+                        
+                        if np.any(non_zero_mask):
+                            # Only calculate MAPE where actual values are non-zero
+                            actual_non_zero = np.array(test_values)[non_zero_mask]
+                            forecast_non_zero = np.array(forecast_values)[non_zero_mask]
+                            
+                            # Calculate percentage errors
+                            percent_errors = np.abs((actual_non_zero - forecast_non_zero) / actual_non_zero)
+                            
+                            # Mean of percentage errors
+                            mape = np.mean(percent_errors) * 100
+                        else:
+                            print(f"Warning: Cannot calculate MAPE for {category} as actual values contain zeros")
+                            mape = None
                     else:
-                        print(f"Warning: Cannot calculate MAPE for {category} as actual values contain zeros")
-                        mape = None
+                        print(f"Warning: Length mismatch between test and forecast for {category}")
+                        mae, rmse, mape = None, None, None
                 except Exception as e:
                     print(f"Error calculating metrics for {category}: {e}")
                     mae, rmse, mape = None, None, None
@@ -538,30 +567,54 @@ class DemandForecaster:
                 # Store forecast
                 self.forecasts[category] = forecast_df
                 
+                # Create visualization data for forecasts
+                forecast_viz_data = []
+                for date, value, lower, upper in zip(forecast_index, 
+                                                forecast_values, 
+                                                forecast_df['lower_ci'], 
+                                                forecast_df['upper_ci']):
+                    forecast_viz_data.append({
+                        'date': date,
+                        'value': float(value),
+                        'lowerBound': float(lower),
+                        'upperBound': float(upper),
+                        'type': 'forecast'
+                    })
+                
+                # Combine historical and forecast data for visualization
+                visualization_data = historical_data + forecast_viz_data
+                
                 return {
                     'model': final_model_fit,
                     'forecast': forecast_df,
                     'params': params,
-                    'performance': self.performance[category]
+                    'performance': self.performance[category],
+                    'visualization_data': visualization_data
                 }
             except Exception as e:
                 print(f"Error creating forecast DataFrame for {category}: {e}")
-                return self._create_empty_forecast_results(category, ts)
+                result = self._create_empty_forecast_results(category, ts)
+                # Add visualization data
+                result['visualization_data'] = historical_data
+                return result
                 
         except Exception as e:
             print(f"Error in final forecasting for {category}: {e}")
-            return self._create_empty_forecast_results(category, ts)
+            result = self._create_empty_forecast_results(category, ts)
+            # Add visualization data
+            result['visualization_data'] = historical_data
+            return result
     
     def _create_empty_forecast_results(self, category, ts):
         """
-        Create empty forecast results when forecasting fails
+        Create empty forecast results when forecasting fails, with improved interpolation
         
         Args:
             category: Product category
             ts: Time series data
         
         Returns:
-            Dictionary with minimal forecast results
+            Dictionary with minimal forecast results and interpolated forecast
         """
         # Get basic statistics from the time series
         # Use absolute value to ensure positive value
@@ -594,14 +647,37 @@ class DemandForecaster:
             # Ultimate fallback - simple range
             forecast_index = range(periods)
         
-        # Create a simple forecast DataFrame using a slightly reduced avg_value
-        # to avoid projecting growth with limited data
-        forecast_values = [max(avg_value * 0.95, 1)] * periods  # Slight reduction, minimum 1
+        # Attempt to generate a simple trend-based forecast if we have enough data
+        if len(ts) >= 2:
+            # Calculate a simple trend from the last few points
+            # Take up to the last 6 points or all available points
+            last_n = min(6, len(ts))
+            last_points = ts[-last_n:]
+            
+            # Calculate slope using simple linear regression
+            x = np.arange(len(last_points))
+            y = np.array(last_points)
+            
+            # Calculate the trend slope
+            try:
+                slope, _ = np.polyfit(x, y, 1)
+            except:
+                # If regression fails, assume flat trend
+                slope = 0
+            
+            # Generate forecast values based on trend
+            last_value = ts.iloc[-1] if hasattr(ts, 'iloc') else ts[-1]
+            forecast_values = [max(last_value + slope * (i+1), 0.1) for i in range(periods)]
+        else:
+            # If we don't have enough data, use a simple average-based forecast
+            # Use a slightly reduced avg_value to avoid projecting growth with limited data
+            forecast_values = [max(avg_value * 0.95, 1)] * periods  # Slight reduction, minimum 1
         
+        # Create forecast DataFrame
         forecast_df = pd.DataFrame({
             'forecast': forecast_values,
-            'lower_ci': [max(avg_value * 0.7, 0)] * periods,  # Simple 30% lower bound
-            'upper_ci': [avg_value * 1.3] * periods   # Simple 30% upper bound
+            'lower_ci': [max(value * 0.7, 0) for value in forecast_values],  # Simple 30% lower bound
+            'upper_ci': [value * 1.3 for value in forecast_values]   # Simple 30% upper bound
         }, index=forecast_index)
         
         # Store the forecast
@@ -624,6 +700,39 @@ class DemandForecaster:
             'performance': self.performance[category],
             'is_fallback': True  # Flag that this is a fallback forecast
         }
+    
+    def run_all_forecasts(self, top_n=5, periods=6):
+        """
+        Run forecasts for top N categories
+        
+        Args:
+            top_n: Number of top categories to forecast
+            periods: Number of periods to forecast
+            
+        Returns:
+            Dictionary of forecasts for each category
+        """
+        # Preprocess data if not already done
+        if not hasattr(self, 'category_data'):
+            self.preprocess_data()
+            
+        # Get top categories by total demand
+        all_categories = {}
+        for category, df in self.category_data.items():
+            count_column = self._get_count_column(category)
+            if count_column:
+                all_categories[category] = 0  # Default if no count column found
+                
+        top_categories = sorted(all_categories.items(), key=lambda x: x[1], reverse=True)[:top_n]
+        
+        # Run forecasts for top categories
+        for category, _ in top_categories:
+            print(f"\nProcessing category: {category}")
+            
+            # Train model and generate forecast
+            self.train_and_forecast(category, periods=periods)
+            
+        return {cat: self.forecasts[cat] for cat, _ in top_categories if cat in self.forecasts}
     
     def plot_forecast(self, category, figsize=(12, 6)):
         """
@@ -684,47 +793,6 @@ class DemandForecaster:
         # Save plot
         plt.savefig(f'{category}_demand_forecast.png')
         plt.close()
-    
-    def run_all_forecasts(self, top_n=5, periods=6):
-        """
-        Run forecasts for top N categories
-        
-        Args:
-            top_n: Number of top categories to forecast
-            periods: Number of periods to forecast
-        """
-        # Preprocess data if not already done
-        if not hasattr(self, 'category_data'):
-            self.preprocess_data()
-            
-        # Get top categories by total demand
-        all_categories = {}
-        for category, df in self.category_data.items():
-            count_column = self._get_count_column(category)
-            if count_column:
-                all_categories[category] = df[count_column].sum()
-            else:
-                all_categories[category] = 0  # Default if no count column found
-            
-        top_categories = sorted(all_categories.items(), key=lambda x: x[1], reverse=True)[:top_n]
-        
-        # Run forecasts for top categories
-        for category, _ in top_categories:
-            print(f"\nProcessing category: {category}")
-            
-            # Plot time series analysis
-            self.plot_time_series(category)
-            
-            # Plot ACF and PACF
-            self.plot_acf_pacf(category)
-            
-            # Train model and generate forecast
-            self.train_and_forecast(category, periods=periods)
-            
-            # Plot forecast
-            self.plot_forecast(category)
-            
-        return {cat: self.forecasts[cat] for cat, _ in top_categories if cat in self.forecasts}
     
     def generate_forecast_report(self, output_file="forecast_report.csv"):
         """
@@ -797,7 +865,9 @@ class DemandForecaster:
                 'rmse': perf['rmse'],
                 'mape': perf['mape'],
                 # Add a flag for forecasts with limited data
-                'data_quality': 'Limited' if len(historical) < 8 else 'Sufficient'
+                'data_quality': 'Limited' if len(historical) < 8 else 'Sufficient',
+                # Include visualization_data flag
+                'has_visualization': True
             })
             
         # Create DataFrame and save
@@ -805,7 +875,7 @@ class DemandForecaster:
         
         # Ensure numeric columns have appropriate data types
         numeric_cols = ['avg_historical_demand', 'forecast_demand', 'min_forecast', 
-                       'max_forecast', 'growth_rate', 'mae', 'rmse', 'mape']
+                    'max_forecast', 'growth_rate', 'mae', 'rmse', 'mape']
         
         for col in numeric_cols:
             if col in report_df.columns:
@@ -816,7 +886,7 @@ class DemandForecaster:
         
         print(f"Forecast report saved to {output_file}")
         return report_df
-        
+
 # If run as a script
 if __name__ == "__main__":
     # Example usage
@@ -827,4 +897,12 @@ if __name__ == "__main__":
     forecasts = forecaster.run_all_forecasts(top_n=5, periods=6)
     
     # Generate report
-    report = forecaster.generate_forecast_report()                   
+    report = forecaster.generate_forecast_report()
+    
+    # Plot forecasts for each category
+    for category in forecasts:
+        forecaster.plot_time_series(category)
+        forecaster.plot_acf_pacf(category)
+        forecaster.plot_forecast(category)
+        
+    print("Forecasting complete. Check the generated report and visualization files.")

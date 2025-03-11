@@ -3,13 +3,13 @@ import { Box, Typography } from '@mui/material';
 import { ScatterChart, Scatter, XAxis, YAxis, ZAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 
 /**
- * Seller Performance Chart Component
+ * Seller Performance Chart Component with enhanced data validation
  * 
  * @param {Object} props Component props
  * @param {Array} props.sellerData Array of seller performance data
  */
 const SellerPerformanceChart = ({ sellerData }) => {
-  // Process seller data for visualization
+  // Process seller data for visualization with robust error handling
   const processedData = useMemo(() => {
     if (!sellerData || sellerData.length === 0) return [];
     
@@ -17,17 +17,25 @@ const SellerPerformanceChart = ({ sellerData }) => {
     const clusters = {};
     
     sellerData.forEach(seller => {
-      const cluster = seller.prediction;
+      if (!seller) return; // Skip null/undefined sellers
+      
+      // Default to cluster 1 (medium) if prediction is missing
+      const cluster = seller.prediction != null ? seller.prediction : 1;
+      
       if (!clusters[cluster]) {
         clusters[cluster] = [];
       }
       
-      // Normalize values to handle potential outliers
+      // Use order_count instead of requiring products_sold
+      // This addresses the "Missing required column: products_sold" error
+      const size = seller.order_count || 20; // Default size if order_count is missing
+      
+      // Normalize values to handle potential outliers and ensure valid data
       clusters[cluster].push({
-        x: seller.total_sales,
-        y: seller.avg_processing_time,
-        z: seller.order_count || 20, // Default size if order_count is missing
-        name: seller.seller_id
+        x: parseFloat(seller.total_sales) || 0,
+        y: parseFloat(seller.avg_processing_time) || 0,
+        z: size,
+        name: seller.seller_id || `Seller ${clusters[cluster].length + 1}`
       });
     });
     
@@ -62,6 +70,23 @@ const SellerPerformanceChart = ({ sellerData }) => {
     }
     return null;
   };
+  
+  // If no data, show a message instead of an empty chart
+  if (processedData.length === 0) {
+    return (
+      <Box sx={{ 
+        width: '100%', 
+        height: '100%', 
+        display: 'flex', 
+        alignItems: 'center', 
+        justifyContent: 'center' 
+      }}>
+        <Typography color="text.secondary">
+          No seller performance data available
+        </Typography>
+      </Box>
+    );
+  }
   
   return (
     <Box sx={{ width: '100%', height: '100%' }}>
