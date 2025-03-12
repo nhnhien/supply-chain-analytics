@@ -447,6 +447,109 @@ class DemandForecaster:
         self.best_params[category] = best_params
         return best_params
     
+    def calculate_consistent_growth_rate(self, category):
+        """
+        Calculate a consistent growth rate for a category that will be used
+        across all parts of the application
+        
+        Args:
+            category: Product category name
+            
+        Returns:
+            float: Growth rate as a percentage (-80 to +100)
+        """
+        # Get historical data
+        count_column = self._get_count_column(category)
+        if not count_column:
+            return 0.0
+            
+        historical = self.category_data[category][count_column]
+        
+        # Can't calculate growth rate without data
+        if len(historical) < 2:
+            return 0.0
+        
+        # Get forecast for this category
+        if category not in self.forecasts:
+            return 0.0
+            
+        forecast = self.forecasts[category]
+        
+        # Calculate average historical demand (use last 3 periods if available)
+        last_n = min(3, len(historical))
+        recent_historical = historical[-last_n:]
+        historical_avg = recent_historical.mean()
+        
+        # Get first forecast value
+        if len(forecast) > 0:
+            future_val = forecast['forecast'].iloc[0]
+        else:
+            future_val = historical_avg * 0.9  # Assume slight decline
+        
+        # Calculate growth rate with safeguards
+        if historical_avg > 0:
+            growth_rate = ((future_val - historical_avg) / historical_avg) * 100
+        else:
+            # If historical value is zero, use an absolute measure
+            growth_rate = 100 if future_val > 0 else 0
+        
+        # Cap growth rate to reasonable bounds
+        growth_rate = max(min(growth_rate, 100), -80)
+        
+        # Store for consistent reference
+        self.growth_rates[category] = growth_rate
+        
+        return growth_rate
+
+    def calculate_robust_mape(self, actuals, forecasts):
+        """
+        Calculate a robust version of Mean Absolute Percentage Error that handles
+        near-zero values and prevents extreme percentage errors
+        
+        Args:
+            actuals: Array-like of actual values
+            forecasts: Array-like of forecast values
+            
+        Returns:
+            float: MAPE value, capped at 100%
+        """
+        if len(actuals) != len(forecasts):
+            return None
+            
+        if len(actuals) == 0:
+            return None
+            
+        # Convert to numpy arrays
+        actuals = np.array(actuals)
+        forecasts = np.array(forecasts)
+        
+        # sMAPE (Symmetric Mean Absolute Percentage Error) calculation
+        # This handles near-zero values better than traditional MAPE
+        denominators = np.abs(actuals) + np.abs(forecasts)
+        
+        # Filter out cases where denominator would be zero (or very close to zero)
+        valid_indexes = denominators >= 0.0001
+        
+        if not np.any(valid_indexes):
+            return 50.0  # Default to 50% error if no valid points
+            
+        actuals_valid = actuals[valid_indexes]
+        forecasts_valid = forecasts[valid_indexes]
+        denominators_valid = denominators[valid_indexes]
+        
+        # Calculate errors
+        abs_errors = np.abs(forecasts_valid - actuals_valid)
+        percentage_errors = abs_errors / (denominators_valid / 2) * 100
+        
+        # Cap individual errors at 100%
+        percentage_errors = np.minimum(percentage_errors, 100)
+        
+        # Calculate mean and cap at 100%
+        mape = np.mean(percentage_errors)
+        mape = min(mape, 100)
+        
+        return mape
+
     def train_and_forecast(self, category, periods=6, use_best_params=True):
         """
         Train ARIMA model and generate forecasts with improved validation and bounds checking
@@ -565,23 +668,8 @@ class DemandForecaster:
                         mae = mean_absolute_error(test_values, forecast_values)
                         rmse = np.sqrt(mean_squared_error(test_values, forecast_values))
                         
-                        # Robust MAPE calculation that handles zeros
-                        # Calculate MAPE only on non-zero actual values
-                        non_zero_mask = np.array(test_values) > 0
-                        
-                        if np.any(non_zero_mask):
-                            # Only calculate MAPE where actual values are non-zero
-                            actual_non_zero = np.array(test_values)[non_zero_mask]
-                            forecast_non_zero = np.array(forecast_values)[non_zero_mask]
-                            
-                            # Calculate percentage errors
-                            percent_errors = np.abs((actual_non_zero - forecast_non_zero) / actual_non_zero)
-                            
-                            # Mean of percentage errors, cap at 100% for UI display purposes
-                            mape = min(100, np.mean(percent_errors) * 100)
-                        else:
-                            print(f"Warning: Cannot calculate MAPE for {category} as actual values contain zeros")
-                            mape = None
+                        # Use robust MAPE calculation
+                        mape = self.calculate_robust_mape(test_values, forecast_values)
                     else:
                         print(f"Warning: Length mismatch between test and forecast for {category}")
                         mae, rmse, mape = None, None, None
@@ -704,28 +792,10 @@ class DemandForecaster:
                         # Use a percentage of the forecast values (30% interval)
                         forecast_df['lower_ci'] = np.maximum(forecast_values * 0.7, 0)
                         forecast_df['upper_ci'] = forecast_values * 1.3
-                        
-                # Recalculate growth rate to avoid -100% values
-                last_historical = ts.iloc[-1] if len(ts) > 0 else 0
-                first_forecast = forecast_df['forecast'].iloc[0] if len(forecast_df) > 0 else 0
                 
-                # Safe growth rate calculation
-                if last_historical > 0:
-                    growth_rate = ((first_forecast - last_historical) / last_historical) * 100
-                    # Cap growth rate at reasonable bounds to avoid extreme values
-                    growth_rate = max(min(growth_rate, 100), -80)  # Cap between -80% and +100%
-                else:
-                    # If historical value is zero, use an absolute difference logic
-                    if first_forecast > 0:
-                        growth_rate = 100  # Positive growth from zero
-                    else:
-                        growth_rate = 0  # No growth
-                    
-                # Store the growth rate for reporting
-                self.growth_rates[category] = growth_rate
-                
-                # Store forecast
-                self.forecasts[category] = forecast_df
+                # Calculate growth rate using the dedicated method
+                self.forecasts[category] = forecast_df  # Store forecast first so growth rate can be calculated
+                growth_rate = self.calculate_consistent_growth_rate(category)
                 
                 # Create visualization data for forecasts
                 forecast_viz_data = []
@@ -923,67 +993,7 @@ class DemandForecaster:
             'visualization_data': visualization_data,
             'growth_rate': growth_rate
         }
-    def calculate_consistent_growth_rate(self, category):
-        """
-        Calculate a consistent growth rate for a category that will be used
-        across all parts of the application
-        
-        Args:
-            category: Product category name
-            
-        Returns:
-            float: Growth rate as a percentage (-80 to +100)
-        """
-        # Get historical data
-        count_column = self._get_count_column(category)
-        if not count_column:
-            return 0.0
-            
-        historical = self.category_data[category][count_column]
-        
-        # Can't calculate growth rate without data
-        if len(historical) < 2:
-            return 0.0
-        
-        # Get forecast for this category
-        if category not in self.forecasts:
-            return 0.0
-            
-        forecast = self.forecasts[category]
-        
-        # Calculate average historical demand (use last 3 periods if available)
-        last_n = min(3, len(historical))
-        recent_historical = historical[-last_n:]
-        historical_avg = recent_historical.mean()
-        
-        # Get first forecast value
-        if len(forecast) > 0:
-            future_val = forecast['forecast'].iloc[0]
-        else:
-            future_val = historical_avg * 0.9  # Assume slight decline
-        
-        # Calculate growth rate with safeguards
-        if historical_avg > 0:
-            growth_rate = ((future_val - historical_avg) / historical_avg) * 100
-        else:
-            # If historical value is zero, use an absolute measure
-            growth_rate = 100 if future_val > 0 else 0
-        
-        # Cap growth rate to reasonable bounds
-        growth_rate = max(min(growth_rate, 100), -80)
-        
-        # Store for consistent reference
-        self.growth_rates[category] = growth_rate
-        
-        return growth_rate
 
-    # Now modify train_and_forecast to use this function:
-    # Find the section where growth_rate is calculated and replace it with:
-
-    # Calculate consistent growth rate
-    growth_rate = self.calculate_consistent_growth_rate(category)
-
-    # And update run_all_forecasts to ensure growth rates are calculated:
     def run_all_forecasts(self, top_n=5, periods=6):
         """
         Run forecasts for top N categories and ensure consistent growth rates
@@ -1023,77 +1033,6 @@ class DemandForecaster:
         
         return {cat: self.forecasts[cat] for cat, _ in top_categories if cat in self.forecasts}
     
-    def calculate_robust_mape(self, actuals, forecasts):
-        """
-        Calculate a robust version of Mean Absolute Percentage Error that handles
-        near-zero values and prevents extreme percentage errors
-        
-        Args:
-            actuals: Array-like of actual values
-            forecasts: Array-like of forecast values
-            
-        Returns:
-            float: MAPE value, capped at 100%
-        """
-        if len(actuals) != len(forecasts):
-            return None
-            
-        if len(actuals) == 0:
-            return None
-            
-        # Convert to numpy arrays
-        actuals = np.array(actuals)
-        forecasts = np.array(forecasts)
-        
-        # sMAPE (Symmetric Mean Absolute Percentage Error) calculation
-        # This handles near-zero values better than traditional MAPE
-        denominators = np.abs(actuals) + np.abs(forecasts)
-        
-        # Filter out cases where denominator would be zero (or very close to zero)
-        valid_indexes = denominators >= 0.0001
-        
-        if not np.any(valid_indexes):
-            return 50.0  # Default to 50% error if no valid points
-            
-        actuals_valid = actuals[valid_indexes]
-        forecasts_valid = forecasts[valid_indexes]
-        denominators_valid = denominators[valid_indexes]
-        
-        # Calculate errors
-        abs_errors = np.abs(forecasts_valid - actuals_valid)
-        percentage_errors = abs_errors / (denominators_valid / 2) * 100
-        
-        # Cap individual errors at 100%
-        percentage_errors = np.minimum(percentage_errors, 100)
-        
-        # Calculate mean and cap at 100%
-        mape = np.mean(percentage_errors)
-        mape = min(mape, 100)
-        
-        return mape
-
-    # Now update the train_and_forecast method to use this robust MAPE calculation
-    # Find the section that calculates error metrics and replace with:
-
-    # Calculate error metrics with robust handling
-    try:
-        # Make sure forecast and test have the same index before calculation
-        test_values = test.values if hasattr(test, 'values') else test
-        forecast_values = forecast.values if hasattr(forecast, 'values') else forecast
-        
-        if len(test_values) == len(forecast_values):
-            mae = mean_absolute_error(test_values, forecast_values)
-            rmse = np.sqrt(mean_squared_error(test_values, forecast_values))
-            
-            # Use robust MAPE calculation
-            mape = self.calculate_robust_mape(test_values, forecast_values)
-        else:
-            print(f"Warning: Length mismatch between test and forecast for {category}")
-            mae, rmse, mape = None, None, None
-    except Exception as e:
-        print(f"Error calculating metrics for {category}: {e}")
-        mae, rmse, mape = None, None, None
-
     def plot_forecast(self, category, figsize=(12, 6)):
         """
         Plot historical data and forecast
