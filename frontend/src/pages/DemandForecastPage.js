@@ -10,7 +10,13 @@ import {
 } from 'recharts';
 
 /**
- * Forecast Interpretation Component that shows explanations of forecast quality
+ * Improved Forecast Interpretation Component that handles extreme values gracefully
+ * 
+ * @param {Object} props Component props
+ * @param {Object} props.forecast Selected category forecast data
+ */
+/**
+ * Enhanced Forecast Interpretation Component with more informative guidance
  * 
  * @param {Object} props Component props
  * @param {Object} props.forecast Selected category forecast data
@@ -18,28 +24,36 @@ import {
 const ForecastInterpretation = ({ forecast }) => {
   if (!forecast) return null;
   
-  // Check if we have meaningful data
-  const hasGrowthRate = forecast.growth_rate != null;
-  const hasMape = forecast.mape != null;
-  const hasRmse = forecast.rmse != null;
-  const hasHistoricalDemand = forecast.avg_historical_demand != null;
+  // Get normalized values with better handling of invalid values
+  const hasGrowthRate = forecast.growth_rate != null && !isNaN(parseFloat(forecast.growth_rate));
+  const hasMape = forecast.mape != null && !isNaN(parseFloat(forecast.mape));
+  const hasRmse = forecast.rmse != null && !isNaN(parseFloat(forecast.rmse));
+  const hasHistoricalDemand = forecast.avg_historical_demand != null && 
+                             !isNaN(parseFloat(forecast.avg_historical_demand));
   const dataQuality = forecast.data_quality || 'Unknown';
   
-  // Generate interpretation text based on data quality
+  // Normalize and cap extreme values
+  const growthRate = hasGrowthRate ? 
+    Math.max(Math.min(parseFloat(forecast.growth_rate), 100), -80) : 0;
+  
+  const mape = hasMape ? 
+    Math.min(parseFloat(forecast.mape), 100) : 30;
+  
+  // Generate interpretation text based on data quality and values
   let interpretationText = '';
   
   if (dataQuality === 'Limited') {
     interpretationText = `The ${forecast.category} category has limited historical data, which affects forecast reliability. `;
     
-    if (hasHistoricalDemand && forecast.avg_historical_demand > 0) {
+    if (hasHistoricalDemand && parseFloat(forecast.avg_historical_demand) > 0) {
       interpretationText += `Historical average demand is ${Math.round(forecast.avg_historical_demand)} units. `;
       
       if (hasGrowthRate) {
         // Use absolute value for messaging but keep the direction
-        const growthDirection = forecast.growth_rate > 0 ? 'growth' : 'decline';
-        interpretationText += `The forecast suggests a ${Math.abs(forecast.growth_rate).toFixed(1)}% ${growthDirection}, but this should be treated as an estimate. `;
+        const growthDirection = growthRate > 0 ? 'growth' : 'decline';
+        interpretationText += `The forecast suggests a ${Math.abs(growthRate).toFixed(1)}% ${growthDirection}, but this should be treated as an estimate given the limited data. `;
       } else {
-        interpretationText += `Growth trends could not be reliably determined. `;
+        interpretationText += `Growth trends could not be reliably determined with limited data. `;
       }
       
       interpretationText += 'Consider collecting more historical data to improve forecast accuracy.';
@@ -47,27 +61,65 @@ const ForecastInterpretation = ({ forecast }) => {
       interpretationText += 'Insufficient historical data is available for meaningful analysis.';
     }
   } else {
-    if (hasGrowthRate) {
-      if (forecast.growth_rate > 5) {
-        interpretationText = `The ${forecast.category} category shows strong growth (${forecast.growth_rate.toFixed(1)}%). Consider increasing inventory.`;
-      } else if (forecast.growth_rate > 0) {
-        interpretationText = `The ${forecast.category} category shows moderate growth (${forecast.growth_rate.toFixed(1)}%). Maintain current inventory levels.`;
-      } else {
-        interpretationText = `The ${forecast.category} category shows a decline (${Math.abs(forecast.growth_rate).toFixed(1)}%). Consider reducing inventory.`;
-      }
-      
-      // Add a note about forecast reliability if MAPE is high
-      if (hasMape && forecast.mape > 30) {
-        interpretationText += ' Note: High forecast error indicates uncertainty in these recommendations.';
-      }
+    // More sophisticated interpretation based on growth rate and accuracy
+    let forecastConfidence = "";
+    
+    // First determine confidence level based on MAPE
+    if (mape > 60) {
+      forecastConfidence = "Low confidence: ";
+      interpretationText += "This forecast has high uncertainty due to volatile historical patterns. ";
+    } else if (mape > 30) {
+      forecastConfidence = "Moderate confidence: ";
+      interpretationText += "This forecast has moderate uncertainty. ";
     } else {
-      interpretationText = `The ${forecast.category} category has insufficient data for growth analysis.`;
+      forecastConfidence = "High confidence: ";
+    }
+    
+    // Now add growth-specific advice
+    if (growthRate <= -50) {
+      interpretationText += `${forecastConfidence}The ${forecast.category} category shows a significant decline (${Math.abs(growthRate).toFixed(1)}%). `;
+      interpretationText += `Consider substantially reducing inventory and investigating potential market shifts.`;
+    } else if (growthRate < -20) {
+      interpretationText += `${forecastConfidence}The ${forecast.category} category shows a strong decline (${Math.abs(growthRate).toFixed(1)}%). `;
+      interpretationText += `Consider reducing inventory and exploring product/marketing improvements.`;
+    } else if (growthRate < 0) {
+      interpretationText += `${forecastConfidence}The ${forecast.category} category shows a moderate decline (${Math.abs(growthRate).toFixed(1)}%). `;
+      interpretationText += `Consider slight inventory reductions while monitoring trends.`;
+    } else if (growthRate > 50) {
+      interpretationText += `${forecastConfidence}The ${forecast.category} category shows exceptional growth (${growthRate.toFixed(1)}%). `;
+      interpretationText += `Consider significantly increasing inventory and expanding supplier capacity.`;
+    } else if (growthRate > 20) {
+      interpretationText += `${forecastConfidence}The ${forecast.category} category shows strong growth (${growthRate.toFixed(1)}%). `;
+      interpretationText += `Consider increasing inventory and securing additional supply.`;
+    } else if (growthRate > 5) {
+      interpretationText += `${forecastConfidence}The ${forecast.category} category shows moderate growth (${growthRate.toFixed(1)}%). `;
+      interpretationText += `Maintain current inventory levels with slight increases.`;
+    } else {
+      interpretationText += `${forecastConfidence}The ${forecast.category} category shows stable demand (${growthRate.toFixed(1)}%). `;
+      interpretationText += `Maintain current inventory levels.`;
+    }
+    
+    // Add quantitative context
+    if (hasHistoricalDemand && hasRmse) {
+      const histDemand = parseFloat(forecast.avg_historical_demand);
+      const rmseValue = parseFloat(forecast.rmse);
+      const rmsePercentage = (rmseValue / histDemand * 100).toFixed(1);
+      
+      interpretationText += ` Typical forecast error is about ${rmsePercentage}% (${Math.round(rmseValue)} units).`;
     }
   }
   
-  // Add RMSE information if available
-  if (hasRmse) {
-    interpretationText += ` RMSE of ${forecast.rmse.toFixed(2)} indicates the average error magnitude in units.`;
+  // Add actionable guidance based on data quality and forecast
+  let actionableGuidance = "";
+  
+  if (mape > 60) {
+    actionableGuidance = "Recommendation: Consider using qualitative methods (expert opinion, market research) alongside this quantitative forecast for decision-making.";
+  } else if (growthRate > 20) {
+    actionableGuidance = "Recommendation: Develop a scaling plan to handle the projected growth, including supplier and logistics capacity.";
+  } else if (growthRate < -20) {
+    actionableGuidance = "Recommendation: Develop a plan to gradually reduce inventory while maintaining service levels.";
+  } else {
+    actionableGuidance = "Recommendation: Review inventory policies quarterly to ensure alignment with demand patterns.";
   }
   
   return (
@@ -77,6 +129,9 @@ const ForecastInterpretation = ({ forecast }) => {
       </Typography>
       <Typography variant="body2" sx={{ mb: 2 }}>
         {interpretationText}
+      </Typography>
+      <Typography variant="body2" fontWeight="medium" color="primary.main">
+        {actionableGuidance}
       </Typography>
     </Box>
   );
@@ -152,57 +207,98 @@ const DemandForecastPage = ({ data }) => {
   
   // Update forecast data when category changes
 // Update forecast data when category changes
+// Update the visualization handling in DemandForecastPage.js
+
+// Improve the useEffect that handles forecast data changes
 useEffect(() => {
   if (selectedCategory && data) {
-    // Get forecast data and category data with proper validations
+    // Always create visualization data, even for uncertain forecasts
     const forecastReport = getValidArray(data.forecastReport);
     const categoryData = getCategoryData(data, selectedCategory);
+    const historicalData = processHistoricalData(categoryData);
     
     // Find the selected category forecast
     const categoryForecast = forecastReport.find(
       forecast => forecast.category === selectedCategory
     );
     
-    if (categoryForecast) {
-      // Check if we have visualization_data in the forecast
-      if (categoryForecast.visualization_data && 
-          Array.isArray(categoryForecast.visualization_data) && 
-          categoryForecast.visualization_data.length > 0) {
+    // Always create visualizations, even if uncertainty is high
+    if (categoryForecast && historicalData.length > 0) {
+      const lastPoint = historicalData[historicalData.length - 1];
+      
+      // Get safe forecast values
+      const forecastValue = parseFloat(categoryForecast.forecast_demand || 
+                                      categoryForecast.next_month_forecast || 0);
+      const growthRate = categoryForecast.growth_rate !== undefined && 
+                        categoryForecast.growth_rate !== null
+                        ? Math.max(Math.min(parseFloat(categoryForecast.growth_rate), 100), -80) / 100
+                        : 0;
+      
+      // Generate forecast points
+      const forecastPoints = [];
+      for (let i = 1; i <= 6; i++) {
+        const forecastDate = new Date(lastPoint.date);
+        forecastDate.setMonth(forecastDate.getMonth() + i);
         
-        // Use the provided visualization data
-        setForecastData(categoryForecast.visualization_data);
-        setHasVisualizationData(true);
-        setForecastNote('');
-      } else {
-        // Try to generate visualization data from historical data
-        const historicalData = processHistoricalData(categoryData);
-        
-        if (historicalData.length > 0) {
-          // Generate simple forecast points from historical trend
-          const forecastPoints = generateForecastPoints(historicalData, categoryForecast);
-          
-          // Combine historical and forecast data
-          const combinedData = [...historicalData, ...forecastPoints];
-          setForecastData(combinedData);
-          setHasVisualizationData(forecastPoints.length > 0);
-          
-          if (forecastPoints.length > 0) {
-            setForecastNote('Note: Forecast visualization is based on statistical trend estimation. For precise values, please refer to the statistics below.');
-          } else {
-            setForecastNote('');
-          }
+        // Calculate point value - for first point use actual forecast if available
+        let pointValue;
+        if (i === 1 && forecastValue > 0) {
+          pointValue = forecastValue;
         } else {
-          // No historical data available
-          setForecastData([]);
-          setHasVisualizationData(false);
-          setForecastNote('');
+          // For subsequent points, apply growth pattern based on type
+          if (growthRate < -0.5) {
+            // Severe decline case - asymptotically approach minimum
+            const decayFactor = Math.pow(1 + growthRate, i);
+            pointValue = Math.max(lastPoint.value * decayFactor, 1);
+          } else if (growthRate > 0) {
+            // Growth case - dampen growth rate for future periods
+            const adjustedGrowth = growthRate / (1 + 0.2 * (i - 1));
+            pointValue = lastPoint.value * (1 + adjustedGrowth * i);
+          } else {
+            // Moderate decline or flat
+            pointValue = Math.max(lastPoint.value * Math.pow(1 + growthRate, i), 1);
+          }
         }
+        
+        // Calculate uncertainty bounds based on MAPE
+        const mape = categoryForecast.mape !== undefined && 
+                   categoryForecast.mape !== null
+                   ? Math.min(parseFloat(categoryForecast.mape), 100) / 100 
+                   : 0.2;
+                   
+        // Uncertainty increases with time horizon
+        const errorFactor = mape * (1 + (i-1) * 0.2);
+        const lowerBound = Math.max(pointValue * (1 - errorFactor), 0);
+        const upperBound = pointValue * (1 + errorFactor);
+        
+        forecastPoints.push({
+          date: forecastDate,
+          value: pointValue,
+          lowerBound: lowerBound,
+          upperBound: upperBound,
+          type: 'forecast'
+        });
+      }
+      
+      // Combine historical and forecast data
+      const combinedData = [...historicalData, ...forecastPoints];
+      setForecastData(combinedData);
+      setHasVisualizationData(true);
+      
+      // Indicate forecast quality in note
+      const mapeValue = categoryForecast.mape;
+      if (mapeValue && mapeValue > 50) {
+        setForecastNote('Note: High forecast uncertainty. Consider this visualization as indicative only.');
+      } else if (mapeValue && mapeValue > 25) {
+        setForecastNote('Note: Moderate forecast uncertainty. Treat projections as directional estimates.');
+      } else {
+        setForecastNote('');
       }
     } else {
-      // No forecast found for this category
-      setForecastData([]);
+      // Empty forecast with no data
+      setForecastData(historicalData);
       setHasVisualizationData(false);
-      setForecastNote('');
+      setForecastNote('No forecast data available for this category.');
     }
   }
 }, [selectedCategory, data]);
@@ -374,85 +470,86 @@ const generateForecastPoints = (historicalData, categoryForecast) => {
               </Typography>
             )}
             
-            <ResponsiveContainer width="100%" height="90%">
-              {hasVisualizationData && forecastData.length > 0 ? (
-                <LineChart
-                  data={forecastData}
-                  margin={{ top: 5, right: 30, left: 20, bottom: 30 }}
-                >
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis 
-                    dataKey="date" 
-                    tickFormatter={formatDate}
-                    label={{ value: 'Month', position: 'bottom', offset: 0 }}
-                  />
-                  <YAxis 
-                    label={{ value: 'Order Count', angle: -90, position: 'insideLeft' }}
-                    domain={[0, dataMax => Math.max(dataMax * 1.1, 10)]} // 10% buffer, minimum 10
-                  />
-                  <Tooltip 
-                    formatter={(value) => new Intl.NumberFormat().format(value)}
-                    labelFormatter={formatDate}
-                  />
-                  <Legend />
-                  <Line
-                    type="monotone"
-                    dataKey="value"
-                    data={forecastData.filter(d => d.type === 'historical')}
-                    name="Historical"
-                    stroke="#8884d8"
-                    strokeWidth={2}
-                    dot={{ r: 4 }}
-                    activeDot={{ r: 8 }}
-                    connectNulls
-                    isAnimationActive={true}
-                  />
-                  <Line
-                    type="monotone"
-                    dataKey="value"
-                    data={forecastData.filter(d => d.type === 'forecast')}
-                    name="Forecast"
-                    stroke="#82ca9d"
-                    strokeWidth={2}
-                    strokeDasharray="5 5"
-                    dot={{ r: 4 }}
-                    connectNulls
-                    isAnimationActive={true}
-                  />
-                  <Line
-                    type="monotone"
-                    dataKey="upperBound"
-                    data={forecastData.filter(d => d.type === 'forecast')}
-                    name="Upper Bound"
-                    stroke="#ffc658"
-                    strokeWidth={1}
-                    strokeDasharray="3 3"
-                    dot={false}
-                    activeDot={false}
-                  />
-                  <Line
-                    type="monotone"
-                    dataKey="lowerBound"
-                    data={forecastData.filter(d => d.type === 'forecast')}
-                    name="Lower Bound"
-                    stroke="#ff8042"
-                    strokeWidth={1}
-                    strokeDasharray="3 3"
-                    dot={false}
-                    activeDot={false}
-                  />
-                </LineChart>
-              ) : (
-                <Box display="flex" flexDirection="column" justifyContent="center" alignItems="center" height="100%">
-                  <Typography color="text.secondary" gutterBottom>
-                    No detailed forecast visualization available for {selectedCategory}
-                  </Typography>
-                  <Typography variant="body2" color="text.secondary">
-                    Basic forecast statistics are available based on historical data
-                  </Typography>
-                </Box>
-              )}
-            </ResponsiveContainer>
+            <ResponsiveContainer width="100%" height="100%">
+  {hasVisualizationData ? (
+    <LineChart
+      data={forecastData}
+      margin={{ top: 20, right: 30, left: 20, bottom: 30 }}
+    >
+      <CartesianGrid strokeDasharray="3 3" />
+      <XAxis 
+        dataKey="date" 
+        tickFormatter={formatDate}
+        label={{ value: 'Month', position: 'bottom', offset: 0 }}
+      />
+      <YAxis 
+        label={{ value: 'Order Count', angle: -90, position: 'insideLeft' }}
+        domain={[0, dataMax => Math.max(dataMax * 1.1, 10)]} // 10% buffer, minimum 10
+      />
+      <Tooltip 
+        formatter={(value) => new Intl.NumberFormat().format(value)}
+        labelFormatter={formatDate}
+      />
+      <Legend />
+      <Line
+        type="monotone"
+        dataKey="value"
+        data={forecastData.filter(d => d.type === 'historical')}
+        name="Historical"
+        stroke="#8884d8"
+        strokeWidth={2}
+        dot={{ r: 4 }}
+        activeDot={{ r: 8 }}
+        connectNulls
+        isAnimationActive={true}
+      />
+      {forecastData.some(d => d.type === 'forecast') && (
+        <>
+          <Line
+            type="monotone"
+            dataKey="value"
+            data={forecastData.filter(d => d.type === 'forecast')}
+            name="Forecast"
+            stroke="#82ca9d"
+            strokeWidth={2}
+            strokeDasharray="5 5"
+            dot={{ r: 4 }}
+            connectNulls
+            isAnimationActive={true}
+          />
+          <Line
+            type="monotone"
+            dataKey="upperBound"
+            data={forecastData.filter(d => d.type === 'forecast')}
+            name="Upper Bound"
+            stroke="#ffc658"
+            strokeWidth={1}
+            strokeDasharray="3 3"
+            dot={false}
+            activeDot={false}
+          />
+          <Line
+            type="monotone"
+            dataKey="lowerBound"
+            data={forecastData.filter(d => d.type === 'forecast')}
+            name="Lower Bound"
+            stroke="#ff8042"
+            strokeWidth={1}
+            strokeDasharray="3 3"
+            dot={false}
+            activeDot={false}
+          />
+        </>
+      )}
+    </LineChart>
+  ) : (
+    <Box display="flex" justifyContent="center" alignItems="center" height="100%">
+      <Typography variant="body1" color="text.secondary">
+        {forecastNote || "No historical data available for this category"}
+      </Typography>
+    </Box>
+  )}
+</ResponsiveContainer>
           </Paper>
         </Grid>
         

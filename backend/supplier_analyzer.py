@@ -138,7 +138,7 @@ class SupplierAnalyzer:
     
     def cluster_suppliers(self, n_clusters=None):
         """
-        Cluster suppliers based on performance metrics
+        Cluster suppliers based on performance metrics with improved balancing
         
         Args:
             n_clusters: Number of clusters to create (if None, will determine optimal)
@@ -172,69 +172,54 @@ class SupplierAnalyzer:
             columns=self.features
         )
         
-        # Calculate cluster performance metrics
-        cluster_metrics = self.data.groupby('cluster').agg({
-            'order_count': 'mean',
-            'avg_processing_time': 'mean',
-            'avg_delivery_days': 'mean',
-            'total_sales': 'mean',
-            'avg_order_value': 'mean'
-        })
+        # Calculate cluster performance metrics - IMPROVED APPROACH
+        # Instead of assigning performance based on cluster averages,
+        # use percentile-based approach to ensure balanced distribution
         
-        # Add on-time delivery rate if available
-        if 'on_time_delivery_rate' in self.data.columns:
-            cluster_on_time = self.data.groupby('cluster')['on_time_delivery_rate'].mean()
-            cluster_metrics['on_time_delivery_rate'] = cluster_on_time
-        
-        # Calculate performance score for each cluster
-        # Higher is better
-        cluster_metrics['score'] = (
-            # Normalized sales (higher is better)
-            (cluster_metrics['total_sales'] / cluster_metrics['total_sales'].max()) * 30 +
+        # Calculate seller scores directly
+        self.data['score'] = (
             # Normalized order count (higher is better)
-            (cluster_metrics['order_count'] / cluster_metrics['order_count'].max()) * 20 +
+            (self.data['order_count'] / self.data['order_count'].max()) * 20 +
+            # Normalized total sales (higher is better)
+            (self.data['total_sales'] / self.data['total_sales'].max()) * 30 +
             # Normalized processing time (lower is better)
-            (1 - (cluster_metrics['avg_processing_time'] / cluster_metrics['avg_processing_time'].max())) * 25
+            (1 - (self.data['avg_processing_time'] / self.data['avg_processing_time'].max())) * 25
         )
         
         # Add on-time delivery to score if available
-        if 'on_time_delivery_rate' in cluster_metrics.columns:
-            cluster_metrics['score'] += (
+        if 'on_time_delivery_rate' in self.data.columns:
+            self.data['score'] += (
                 # Normalized on-time delivery (higher is better)
-                (cluster_metrics['on_time_delivery_rate'] / 100) * 25
+                (self.data['on_time_delivery_rate'] / 100) * 25
             )
         else:
             # Add normalized delivery days if on-time rate isn't available
-            cluster_metrics['score'] += (
+            self.data['score'] += (
                 # Normalized delivery days (lower is better)
-                (1 - (cluster_metrics['avg_delivery_days'] / cluster_metrics['avg_delivery_days'].max())) * 25
+                (1 - (self.data['avg_delivery_days'] / self.data['avg_delivery_days'].max())) * 25
             )
         
-        # Rank clusters by performance score
-        cluster_metrics = cluster_metrics.sort_values('score', ascending=False)
+        # Use quantile-based approach to assign performance labels
+        high_threshold = self.data['score'].quantile(0.70)  # Top 30% are high performers
+        low_threshold = self.data['score'].quantile(0.30)   # Bottom 30% are low performers
         
-        # Assign performance labels (High, Medium, Low)
+        # Assign performance labels based on score quantiles
+        self.data['performance'] = 'Medium'
+        self.data.loc[self.data['score'] >= high_threshold, 'performance'] = 'High'
+        self.data.loc[self.data['score'] <= low_threshold, 'performance'] = 'Low'
+        
+        # Map to standard prediction values (0=High, 1=Medium, 2=Low)
+        performance_mapping = {'High': 0, 'Medium': 1, 'Low': 2}
+        self.data['prediction'] = self.data['performance'].map(performance_mapping)
+        
+        # Generate cluster interpretation data
+        # Create performance labels dictionary for each cluster
         self.performance_labels = {}
-        for i, (cluster, _) in enumerate(cluster_metrics.iterrows()):
-            if i == 0:
-                self.performance_labels[cluster] = 'High'
-            elif i == len(cluster_metrics) - 1:
-                self.performance_labels[cluster] = 'Low'
-            else:
-                self.performance_labels[cluster] = 'Medium'
-        
-        # Add performance label to data
-        self.data['performance'] = self.data['cluster'].map(self.performance_labels)
-        
-        # Map original clusters to 0, 1, 2 for consistency with visualization
-        cluster_mapping = {}
-        for i, cluster in enumerate(sorted(self.performance_labels.keys(), 
-                                         key=lambda x: 0 if self.performance_labels[x] == 'High' else 
-                                                      1 if self.performance_labels[x] == 'Medium' else 2)):
-            cluster_mapping[cluster] = i
-        
-        # Add standardized prediction column (0=High, 1=Medium, 2=Low)
-        self.data['prediction'] = self.data['cluster'].map(cluster_mapping)
+        for cluster in self.data['cluster'].unique():
+            cluster_df = self.data[self.data['cluster'] == cluster]
+            # Most common performance label in this cluster
+            most_common = cluster_df['performance'].mode()[0]
+            self.performance_labels[cluster] = most_common
         
         # Prepare cluster interpretation data
         interpretation = pd.DataFrame({
@@ -242,13 +227,13 @@ class SupplierAnalyzer:
             'performance': [self.performance_labels[c] for c in self.performance_labels.keys()],
             'count': [sum(self.data['cluster'] == c) for c in self.performance_labels.keys()],
             'percentage': [sum(self.data['cluster'] == c) / len(self.data) * 100 
-                         for c in self.performance_labels.keys()],
+                        for c in self.performance_labels.keys()],
             'avg_sales': [self.data[self.data['cluster'] == c]['total_sales'].mean() 
                         for c in self.performance_labels.keys()],
             'avg_processing_time': [self.data[self.data['cluster'] == c]['avg_processing_time'].mean() 
-                                  for c in self.performance_labels.keys()],
+                                for c in self.performance_labels.keys()],
             'avg_order_count': [self.data[self.data['cluster'] == c]['order_count'].mean() 
-                              for c in self.performance_labels.keys()]
+                            for c in self.performance_labels.keys()]
         })
         
         # Ensure the interpretation is sorted by performance
