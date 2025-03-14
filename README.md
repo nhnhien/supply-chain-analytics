@@ -9,6 +9,7 @@ This project uses big data analytics techniques to optimize supply chain operati
 - **Inventory Optimization**: Data-driven safety stock and reorder point calculations
 - **Geographical Insights**: Regional analysis of order patterns
 - **Interactive Dashboard**: Visualize key metrics and trends
+- **Big Data Support**: Spark integration for large-scale datasets
 
 ## Getting Started
 
@@ -17,12 +18,13 @@ This project uses big data analytics techniques to optimize supply chain operati
 - Python 3.8 or higher
 - Node.js 14+ (for frontend)
 - Required Python packages (see `requirements.txt`)
+- Apache Spark (optional, for large datasets)
 
 ### Installation
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/nhiennh/supply-chain-analytics.git
+git clone https://github.com/yourusername/supply-chain-analytics.git
 cd supply-chain-analytics
 ```
 
@@ -56,6 +58,12 @@ Additional options:
 --clean                  # Clean output directory before running
 ```
 
+For large datasets, use the Spark implementation:
+
+```bash
+python -c "from backend.spark_implementation import run_spark_analysis; run_spark_analysis(data_dir='./data', output_dir='./output')"
+```
+
 ### Viewing Results
 
 1. Check the summary report:
@@ -79,7 +87,7 @@ The analysis expects the following CSV files in the data directory:
 - `df_OrderItems.csv` - Items within orders
 - `df_Customers.csv` - Customer information
 - `df_Products.csv` - Product details
-- `df_Payments.csv` - Payment information
+- `df_Payments.csv` - Payment information (optional)
 
 ## Output Files
 
@@ -122,6 +130,18 @@ The inventory recommendation process:
 4. Reorder point determination
 5. Order frequency optimization using EOQ principles
 
+## Architecture
+
+The project follows a modular architecture:
+
+- **Data Processing Layer**: Handles data loading, cleaning, and integration
+- **Analytics Engine**: Performs core analytical operations
+- **Forecasting Engine**: Implements time series forecasting algorithms
+- **Visualization Layer**: Creates visual representations of insights
+- **Web Dashboard**: Provides interactive access to analytics results
+
+For more details, see the `ARCHITECTURE.md` document.
+
 ## Extending the Project
 
 ### Adding New Data Sources
@@ -145,19 +165,27 @@ To create additional visualizations:
 2. Update `main.py` to call these methods
 3. Enhance frontend components if needed
 
-## Project Structure
+## Big Data Processing
 
-```
-supply-chain-analytics/
-├── README.md                    # Project documentation
-├── requirements.txt             # Required Python packages
-├── run_analysis.py              # Main entry point script
-├── backend/                     # Backend code
-│   ├── arima_forecasting.py     # Enhanced ARIMA forecasting module
-│   ├── data_preprocessing.py    # Data cleaning and preparation
-│   ├── main.py                  # Analysis orchestration
-│   ├── supplier_analyzer.py     # Supplier clustering and analysis
-│   ├── visualization_module.py  # Visualization utilities
-│   └── spark_implementation.py  # Optional Spark-based analysis
-├── frontend/                    # Frontend application
-│
+For large datasets, the project includes Spark integration:
+
+1. Use `spark_implementation.py` instead of the standard processing pipeline
+2. Configure Spark settings for your environment in the script
+3. Run the analysis as shown above with the Spark implementation
+
+## Error Handling
+
+The project includes robust error handling:
+
+1. Input validation with comprehensive data checks
+2. Graceful degradation with fallback strategies
+3. Detailed logging for troubleshooting
+
+## License
+
+This project is licensed under the MIT License - see the LICENSE file for details.
+
+## Acknowledgments
+
+- This project was developed as part of the Big Data Analytics course
+- Uses various open-source libraries including Pandas, NumPy, Scikit-learn, and pmdarima

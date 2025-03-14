@@ -1,5 +1,5 @@
 # Supply Chain Analytics for Demand Forecasting
-## Report Generated on 2025-03-12 11:19:29
+## Report Generated on 2025-03-13 12:18:03
 
 ### Dataset Summary
 - Data source: ./data
@@ -22,21 +22,21 @@
 - watches_gifts: Avg. forecasted demand 396.5 units/month
 
 #### Inventory Recommendations
-- toys: Reorder at 10312.1 units, Safety stock: 7558.3 units
-- health_beauty: Reorder at 1056.3 units, Safety stock: 728.1 units
-- computers_accessories: Reorder at 1149.3 units, Safety stock: 928.3 units
-- garden_tools: Reorder at 895.7 units, Safety stock: 706.2 units
-- watches_gifts: Reorder at 699.9 units, Safety stock: 597.0 units
+- toys: Reorder at 10303.6 units, Safety stock: 7553.4 units
+- health_beauty: Reorder at 1042.2 units, Safety stock: 720.7 units
+- computers_accessories: Reorder at 1138.5 units, Safety stock: 921.0 units
+- garden_tools: Reorder at 880.4 units, Safety stock: 696.2 units
+- watches_gifts: Reorder at 704.9 units, Safety stock: 600.7 units
 
 #### Supply Chain Performance Metrics
-- Average Delivery Time: 5.4 days
-- On-Time Delivery Rate: 76.3%
+- Average Delivery Time: 5.5 days
+- On-Time Delivery Rate: 76.4%
 - Average Order Processing Time: 0.4 days
 
 #### Seller Performance Insights
-- High Performers: 2035 sellers (82.2%)
+- High Performers: 1910 sellers (77.1%)
 - Medium Performers: 1 sellers (0.0%)
-- Low Performers: 440 sellers (17.8%)
+- Low Performers: 565 sellers (22.8%)
 
 ### Visualization Files
 - cluster_centers.csv
@@ -50,7 +50,7 @@
 - heatmap_toys.png
 - heatmap_watches_gifts.png
 - monthly_demand.csv
+- performance_benchmarks.png
+- performance_benchmarks_comparison.png
 - performance_metrics.csv
 - performance_summary.csv
-- processed_orders.csv
-- processed_order_items.csv
