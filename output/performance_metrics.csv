@@ -1,2 +1,2 @@
-avg_processing_time,avg_delivery_days,on_time_delivery_rate,perfect_order_rate,avg_order_value,inventory_turnover,is_estimated
-0.5876882123295895,7.0,85.0,80.75,6618.898157478769,8.0,True
+on_time_delivery_rate,avg_processing_time,avg_delivery_days,perfect_order_rate,inventory_turnover,return_rate
+92.29299873036933,0.4345985119625201,12.701024615783657,87.67834879385086,8.0,3.0

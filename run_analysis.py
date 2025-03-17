@@ -47,23 +47,25 @@ def clean_directory(directory):
     ensure_directory(directory)
 
 def check_dependencies():
-    """Check if required packages are installed"""
-    # Skip the dependency check to avoid import issues
-    return True
-    
-    # The code below is skipped
-    required_packages = [
-        'pandas', 'numpy', 'matplotlib', 'seaborn', 'scikit-learn',
-        'statsmodels', 'pmdarima'
-    ]
+    """Check if required packages are installed."""
+    # Map display names to their actual importable module names
+    required_packages = {
+        'pandas': 'pandas',
+        'numpy': 'numpy',
+        'matplotlib': 'matplotlib',
+        'seaborn': 'seaborn',
+        'scikit-learn': 'sklearn',  
+        'statsmodels': 'statsmodels',
+        'pmdarima': 'pmdarima'
+    }
     
     missing_packages = []
     
-    for package in required_packages:
+    for package_display, module_name in required_packages.items():
         try:
-            __import__(package)
+            __import__(module_name)
         except ImportError:
-            missing_packages.append(package)
+            missing_packages.append(package_display)
     
     if missing_packages:
         print("Missing required packages:")
@@ -74,6 +76,8 @@ def check_dependencies():
         return False
     
     return True
+
+
 def run_analysis(args):
     """Run the main analysis using parsed arguments"""
     # Construct the command
@@ -158,7 +162,7 @@ def setup_frontend(args):
                 shutil.copy2(source, destination)
                 print(f"  Copied {filename}")
         
-        print(f"All output files copied to frontend data directory")
+        print("All output files copied to frontend data directory")
     except Exception as e:
         print(f"Error setting up frontend: {e}")
         return False

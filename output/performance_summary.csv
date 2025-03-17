@@ -1,0 +1,9 @@
+metric,value
+Total Orders,89316
+Total Products,89316
+Total Sellers,2929
+Average Order Value,$547.47
+Average Processing Time,0.47 days
+Average Delivery Days,13.04 days
+On-Time Delivery Rate,91.74%
+Forecast Accuracy (Avg MAPE),67.02%

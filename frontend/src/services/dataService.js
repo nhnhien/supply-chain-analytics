@@ -15,52 +15,40 @@ const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || 'http://localhost:500
 async function loadCsvData(filePath, mockDataGenerator) {
   try {
     const response = await fetch(filePath);
-    
     if (!response.ok) {
       console.warn(`CSV file not found: ${filePath}, using mock data instead`);
       return mockDataGenerator ? mockDataGenerator() : [];
     }
-    
     const csvText = await response.text();
-    
     return new Promise((resolve, reject) => {
       Papa.parse(csvText, {
         header: true,
-        dynamicTyping: true,  // This helps but doesn't handle all cases
-        skipEmptyLines: true, // Skip empty lines in the CSV
-        delimitersToGuess: [',', '\t', '|', ';'], // Try to detect different delimiters
-        // Handle values that should be parsed as special cases
+        dynamicTyping: true,
+        skipEmptyLines: true,
+        delimitersToGuess: [',', '\t', '|', ';'],
         transformHeader: header => header.trim(),
         transform: (value, field) => {
-          // Handle empty values
           if (value === "" || value === undefined || value === null) {
             return null;
           }
-          
-          // Handle N/A values
           if (value === "N/A" || value === "n/a" || value === "NA") {
             return null;
           }
-          
-          // Handle CSV-quoted ARIMA parameters (e.g. "(1,1,1)")
           if (field === "arima_params" && typeof value === "string") {
-            // Remove any extra quotes that might be in the field
             return value.replace(/^["'](.+)["']$/, "$1");
           }
-          
           return value;
         },
         complete: (results) => {
-          // Check if parsing resulted in error
+          // If there are any parsing errors, reject the promise
           if (results.errors && results.errors.length > 0) {
-            console.warn("CSV parsing had errors:", results.errors);
+            console.error("CSV parsing errors:", results.errors);
+            return reject(new Error("CSV parsing errors: " + JSON.stringify(results.errors)));
           }
-          
-          // Process the data further to ensure correct types
+          // Process the data to enforce proper types
           const processedData = results.data
-            .filter(row => Object.keys(row).length > 1) // Filter out empty rows
+            .filter(row => Object.keys(row).length > 1)
             .map(row => {
-              // Process numeric fields that might still be strings
               const numericFields = [
                 'avg_historical_demand', 'forecast_demand', 'min_forecast', 'max_forecast',
                 'growth_rate', 'mape', 'rmse', 'mae', 'order_count', 'count',
@@ -69,7 +57,6 @@ async function loadCsvData(filePath, mockDataGenerator) {
                 'on_time_delivery', 'perfect_order_rate', 'inventory_turnover',
                 'lead_time_days', 'days_between_orders', 'avg_item_cost'
               ];
-              
               for (const field of numericFields) {
                 if (field in row && row[field] !== null) {
                   const parsed = parseFloat(row[field]);
@@ -78,8 +65,6 @@ async function loadCsvData(filePath, mockDataGenerator) {
                   }
                 }
               }
-              
-              // Ensure date fields are proper Date objects when possible
               if (row.date && typeof row.date === 'string') {
                 try {
                   row.date = new Date(row.date);
@@ -87,19 +72,15 @@ async function loadCsvData(filePath, mockDataGenerator) {
                   console.warn(`Could not parse date: ${row.date}`);
                 }
               }
-              
-              // If both year and month fields exist, create a date field if not already present
               if (!row.date && (row.order_year || row.year) && (row.order_month || row.month)) {
                 const year = parseInt(row.order_year || row.year);
-                const month = parseInt(row.order_month || row.month) - 1; // JavaScript months are 0-indexed
+                const month = parseInt(row.order_month || row.month) - 1;
                 if (!isNaN(year) && !isNaN(month)) {
                   row.date = new Date(year, month, 1);
                 }
               }
-              
               return row;
             });
-            
           resolve(processedData);
         },
         error: (error) => {
@@ -113,6 +94,7 @@ async function loadCsvData(filePath, mockDataGenerator) {
     return mockDataGenerator ? mockDataGenerator() : [];
   }
 }
+
 
 /**
  * Generate consistent mock forecast report data

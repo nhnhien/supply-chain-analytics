@@ -1,9 +1,9 @@
 # Supply Chain Analytics for Demand Forecasting
-## Report Generated on 2025-03-13 12:18:03
+## Report Generated on 2025-03-17 11:21:20
 
 ### Dataset Summary
 - Data source: ./data
-- Top 5 product categories analyzed
+- Top 15 product categories analyzed
 - Forecast horizon: 6 months
 
 ### Key Findings
@@ -13,30 +13,35 @@
 3. computers_accessories
 4. garden_tools
 5. watches_gifts
+6. bed_bath_table
+7. furniture_decor
+8. sports_leisure
+9. cool_stuff
+10. perfumery
 
 #### Demand Forecast Highlights
-- toys: Avg. forecasted demand 1501.9 units/month
-- health_beauty: Avg. forecasted demand 1555.5 units/month
-- computers_accessories: Avg. forecasted demand 1348.1 units/month
-- garden_tools: Avg. forecasted demand 100.3 units/month
-- watches_gifts: Avg. forecasted demand 396.5 units/month
+- toys: Avg. forecasted demand 7790.1 units/month
+- health_beauty: Avg. forecasted demand 9385.5 units/month
+- computers_accessories: Avg. forecasted demand 3269.1 units/month
+- garden_tools: Avg. forecasted demand 484.1 units/month
+- watches_gifts: Avg. forecasted demand 1807.8 units/month
 
 #### Inventory Recommendations
-- toys: Reorder at 10303.6 units, Safety stock: 7553.4 units
-- health_beauty: Reorder at 1042.2 units, Safety stock: 720.7 units
-- computers_accessories: Reorder at 1138.5 units, Safety stock: 921.0 units
-- garden_tools: Reorder at 880.4 units, Safety stock: 696.2 units
-- watches_gifts: Reorder at 704.9 units, Safety stock: 600.7 units
+- toys: Reorder at 100063.1 units, Safety stock: 66024.7 units
+- health_beauty: Reorder at 7343.7 units, Safety stock: 4357.2 units
+- computers_accessories: Reorder at 7570.0 units, Safety stock: 5312.4 units
+- garden_tools: Reorder at 7819.8 units, Safety stock: 5486.5 units
+- watches_gifts: Reorder at 8977.8 units, Safety stock: 7116.6 units
 
 #### Supply Chain Performance Metrics
-- Average Delivery Time: 5.5 days
-- On-Time Delivery Rate: 76.4%
+- Average Delivery Time: 12.7 days
+- On-Time Delivery Rate: 92.3%
 - Average Order Processing Time: 0.4 days
 
 #### Seller Performance Insights
-- High Performers: 1910 sellers (77.1%)
+- High Performers: 2610 sellers (89.1%)
 - Medium Performers: 1 sellers (0.0%)
-- Low Performers: 565 sellers (22.8%)
+- Low Performers: 318 sellers (10.9%)
 
 ### Visualization Files
 - cluster_centers.csv
@@ -50,7 +55,7 @@
 - heatmap_toys.png
 - heatmap_watches_gifts.png
 - monthly_demand.csv
-- performance_benchmarks.png
-- performance_benchmarks_comparison.png
 - performance_metrics.csv
 - performance_summary.csv
+- processed_orders.csv
+- processed_order_items.csv

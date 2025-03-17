@@ -23,19 +23,17 @@ from data_preprocessing import preprocess_order_data, preprocess_product_data, p
 
 def calculate_delivery_days(orders, supply_chain=None):
     """
-    Calculate delivery days based on timestamp data
+    Calculate delivery days based on timestamp data.
     
     Args:
-        orders: DataFrame containing order data
-        supply_chain: Optional unified supply chain DataFrame for category/state-based estimations
+        orders: DataFrame containing order data.
+        supply_chain: Optional unified supply chain DataFrame for category/state-based estimations.
     
     Returns:
-        Updated orders DataFrame with delivery_days calculated
+        Updated orders DataFrame with delivery_days calculated.
     """
-    # Check if preprocess_order_data already calculated delivery_days
+    # If delivery_days already exists and has valid values, use them (potentially filling gaps later)
     if 'delivery_days' in orders.columns and not orders['delivery_days'].isna().all():
-        # If we already have some delivery days calculated, just fill in the gaps
-        # using category and state information from supply_chain
         pass
     else:
         # Convert timestamp columns to datetime
@@ -45,7 +43,7 @@ def calculate_delivery_days(orders, supply_chain=None):
         # Calculate processing time (days between purchase and approval)
         orders['processing_time'] = (orders['order_approved_at'] - orders['order_purchase_timestamp']).dt.days
         
-        # If order_delivered_timestamp exists, calculate actual delivery days
+        # Calculate actual delivery days if delivery timestamp is available
         if 'order_delivered_customer_date' in orders.columns:
             orders['order_delivered_customer_date'] = pd.to_datetime(orders['order_delivered_customer_date'])
             mask = orders['order_delivered_customer_date'].notna() & orders['order_purchase_timestamp'].notna()
@@ -54,7 +52,7 @@ def calculate_delivery_days(orders, supply_chain=None):
                 orders.loc[mask, 'order_purchase_timestamp']
             ).dt.days
         else:
-            # If we don't have delivery timestamp, estimate from order_estimated_delivery_date if available
+            # Otherwise, use estimated delivery dates if available
             if 'order_estimated_delivery_date' in orders.columns:
                 orders['order_estimated_delivery_date'] = pd.to_datetime(orders['order_estimated_delivery_date'])
                 mask = orders['order_estimated_delivery_date'].notna() & orders['order_purchase_timestamp'].notna()
@@ -62,56 +60,55 @@ def calculate_delivery_days(orders, supply_chain=None):
                     orders.loc[mask, 'order_estimated_delivery_date'] - 
                     orders.loc[mask, 'order_purchase_timestamp']
                 ).dt.days
-                # Use estimated days when actual is not available
+                # Fill delivery_days with estimated values where actual values are missing
                 orders['delivery_days'] = orders.get('delivery_days', pd.Series(index=orders.index)).fillna(orders['estimated_delivery_days'])
             else:
-                # Create a placeholder delivery_days column if it doesn't exist
+                # Create placeholder column if delivery_days does not exist
                 if 'delivery_days' not in orders.columns:
                     orders['delivery_days'] = None
     
-    # If we have the supply_chain DataFrame and there are still missing values
+    # Use supply_chain data to fill in missing delivery_days if available
     if supply_chain is not None and orders['delivery_days'].isna().any():
-        # Use category level medians if product_category_name is available
+        # Use category-level medians if product_category_name is available
         if 'product_category_name' in supply_chain.columns:
-            # Ensure we're only using valid delivery_days for the median calculation
+            # Calculate median delivery days per category using valid values
             category_medians = supply_chain.dropna(subset=['delivery_days']).groupby('product_category_name')['delivery_days'].median().to_dict()
             
-            # Join orders with order_items and products to get category info
+            # Merge orders with category info from supply_chain using order_id
             if 'order_id' in supply_chain.columns:
                 order_categories = supply_chain[['order_id', 'product_category_name']].drop_duplicates()
                 orders_with_categories = orders.merge(order_categories, on='order_id', how='left')
                 
-                # Apply category medians
+                # For each category, update orders that are missing delivery_days
                 for category, median in category_medians.items():
                     if pd.notna(median):
-                        category_mask = (orders_with_categories['product_category_name'] == category) & (orders['delivery_days'].isna())
-                        orders.loc[category_mask.index, 'delivery_days'] = median
+                        mask = (orders_with_categories['product_category_name'] == category) & (orders_with_categories['delivery_days'].isna())
+                        # Extract the matching order IDs from the merged DataFrame
+                        matching_order_ids = orders_with_categories.loc[mask, 'order_id']
+                        orders.loc[orders['order_id'].isin(matching_order_ids), 'delivery_days'] = median
         
-        # Fill remaining NAs with customer state median if available
+        # Fill remaining NAs using customer state medians if available
         if 'customer_state' in supply_chain.columns and orders['delivery_days'].isna().any():
-            # Ensure we're only using valid delivery_days for the median calculation
             state_medians = supply_chain.dropna(subset=['delivery_days']).groupby('customer_state')['delivery_days'].median().to_dict()
             
-            # Join orders with customers to get state info
             if 'order_id' in supply_chain.columns:
                 order_states = supply_chain[['order_id', 'customer_state']].drop_duplicates()
                 orders_with_states = orders.merge(order_states, on='order_id', how='left')
                 
-                # Apply state medians
                 for state, median in state_medians.items():
                     if pd.notna(median):
-                        state_mask = (orders_with_states['customer_state'] == state) & (orders['delivery_days'].isna())
-                        orders.loc[state_mask.index, 'delivery_days'] = median
+                        mask = (orders_with_states['customer_state'] == state) & (orders_with_states['delivery_days'].isna())
+                        matching_order_ids = orders_with_states.loc[mask, 'order_id']
+                        orders.loc[orders['order_id'].isin(matching_order_ids), 'delivery_days'] = median
     
-    # Fill any remaining NAs with global median
+    # Fill any remaining missing values with the global median or a default value
     global_median = orders['delivery_days'].median()
     if not pd.isna(global_median):
         orders['delivery_days'] = orders['delivery_days'].fillna(global_median)
     else:
-        # As a last resort, use a reasonable industry standard (7 days)
         orders['delivery_days'] = orders['delivery_days'].fillna(7)
     
-    # Ensure delivery days is within reasonable bounds (1-30 days)
+    # Clip delivery days to be within reasonable bounds (1 to 30 days)
     orders['delivery_days'] = orders['delivery_days'].clip(1, 30)
     
     return orders
