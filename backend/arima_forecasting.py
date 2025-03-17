@@ -177,7 +177,7 @@ class DemandForecaster:
                     axes[1].set_ylabel('Trend')
                     axes[1].grid(True)
                     axes[2].plot(decomposition.seasonal.index, decomposition.seasonal.values)
-                    axes[2].setTitle('Seasonal Component')
+                    axes[2].set_title('Seasonal Component')
                     axes[2].set_ylabel('Seasonality')
                     axes[2].grid(True)
                 else:

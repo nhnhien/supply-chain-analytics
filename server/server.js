@@ -175,33 +175,56 @@ app.get('/api/dashboard-data', (req, res) => {
         return acc;
       }, {});
       
-      // Helper functions defined inline for dashboard processing.
+      // Helper function to process demand data with normalization
       function processDemandData(data) {
         return data.map(row => {
+          if (!row) return null;
+          // Normalize date: use row.date if valid; otherwise try year/month fields.
           if (!row.date) {
-            const year = row.year || row.order_year;
-            const month = row.month || row.order_month;
-            row.date = new Date(year, month - 1, 1);
+            const year = row.order_year || row.year;
+            const month = row.order_month || row.month;
+            if (year && month) {
+              const parsedYear = parseInt(year);
+              const parsedMonth = parseInt(month);
+              if (!isNaN(parsedYear) && !isNaN(parsedMonth)) {
+                row.date = new Date(parsedYear, parsedMonth - 1, 1);
+              } else {
+                console.warn(`Invalid year/month in row: ${JSON.stringify(row)}. Using current date as fallback.`);
+                row.date = new Date();
+              }
+            } else {
+              console.warn(`Missing date/year/month in row: ${JSON.stringify(row)}. Using current date as fallback.`);
+              row.date = new Date();
+            }
           } else if (typeof row.date === 'string') {
-            row.date = new Date(row.date);
+            const parsedDate = new Date(row.date);
+            if (isNaN(parsedDate.getTime())) {
+              console.warn(`Invalid date string: ${row.date}. Using current date as fallback.`);
+              row.date = new Date();
+            } else {
+              row.date = parsedDate;
+            }
           }
+          // Ensure count exists; fallback to order_count or 0.
           if (!row.count && row.order_count) {
             row.count = row.order_count;
           }
+          row.count = Number(row.count) || 0;
           return row;
-        });
+        }).filter(row => row !== null);
       }
       
       function getTopCategories(data, limit = 5) {
         const categoryTotals = {};
         data.forEach(row => {
-          const category = row.product_category_name;
-          const count = row.count || row.order_count || 0;
+          if (!row) return;
+          const category = row.product_category_name || row.category;
+          const count = Number(row.count || row.order_count || 0);
           if (category) {
             if (!categoryTotals[category]) {
               categoryTotals[category] = 0;
             }
-            categoryTotals[category] += Number(count) || 0;
+            categoryTotals[category] += count;
           }
         });
         return Object.entries(categoryTotals)
@@ -213,7 +236,8 @@ app.get('/api/dashboard-data', (req, res) => {
       function groupByCategory(data) {
         const grouped = {};
         data.forEach(row => {
-          const category = row.product_category_name;
+          if (!row) return;
+          const category = row.product_category_name || row.category;
           if (category) {
             if (!grouped[category]) {
               grouped[category] = [];
@@ -227,6 +251,7 @@ app.get('/api/dashboard-data', (req, res) => {
       function extractSellerMetrics(sellerClusters) {
         const clusterMetrics = {};
         sellerClusters.forEach(seller => {
+          if (!seller) return;
           const cluster = seller.prediction;
           if (cluster === undefined || cluster === null) return;
           if (!clusterMetrics[cluster]) {
@@ -244,9 +269,9 @@ app.get('/api/dashboard-data', (req, res) => {
         });
         Object.keys(clusterMetrics).forEach(cluster => {
           const metrics = clusterMetrics[cluster];
-          metrics.avg_sales = metrics.total_sales / metrics.count;
-          metrics.avg_processing_time = metrics.avg_processing_time / metrics.count;
-          metrics.avg_delivery_days = metrics.avg_delivery_days / metrics.count;
+          metrics.avg_sales = metrics.count > 0 ? metrics.total_sales / metrics.count : 0;
+          metrics.avg_processing_time = metrics.count > 0 ? metrics.avg_processing_time / metrics.count : 0;
+          metrics.avg_delivery_days = metrics.count > 0 ? metrics.avg_delivery_days / metrics.count : 0;
         });
         return { clusterMetrics, sellerCount: sellerClusters.length };
       }
@@ -254,9 +279,12 @@ app.get('/api/dashboard-data', (req, res) => {
       function calculateKPIs(demandData, sellerData, forecastData) {
         let totalProcessingTime = 0;
         let sellerCount = 0;
+        sellerData = Array.isArray(sellerData) ? sellerData : [];
+        forecastData = Array.isArray(forecastData) ? forecastData : [];
+        demandData = Array.isArray(demandData) ? demandData : [];
         sellerData.forEach(seller => {
-          if (seller.avg_processing_time) {
-            totalProcessingTime += Number(seller.avg_processing_time);
+          if (seller && seller.avg_processing_time) {
+            totalProcessingTime += Number(seller.avg_processing_time) || 0;
             sellerCount++;
           }
         });
@@ -264,8 +292,8 @@ app.get('/api/dashboard-data', (req, res) => {
         let totalGrowthRate = 0;
         let forecastCount = 0;
         forecastData.forEach(forecast => {
-          if (forecast.growth_rate) {
-            totalGrowthRate += Number(forecast.growth_rate);
+          if (forecast && forecast.growth_rate !== undefined && forecast.growth_rate !== null) {
+            totalGrowthRate += Number(forecast.growth_rate) || 0;
             forecastCount++;
           }
         });
@@ -274,7 +302,6 @@ app.get('/api/dashboard-data', (req, res) => {
         demandData.forEach(row => {
           totalDemand += Number(row.count || row.order_count || 0);
         });
-        // Use default on-time delivery if not available.
         let onTimeDelivery = 85.0;
         try {
           const metricsPath = path.join(__dirname, '../output', 'order_performance_metrics.csv');

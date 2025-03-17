@@ -3,7 +3,7 @@ import { Box, Typography } from '@mui/material';
 import { ScatterChart, Scatter, XAxis, YAxis, ZAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 
 /**
- * Seller Performance Chart Component with enhanced data validation
+ * Seller Performance Chart Component with enhanced data validation.
  * 
  * @param {Object} props Component props
  * @param {Array} props.sellerData Array of seller performance data
@@ -20,21 +20,37 @@ const SellerPerformanceChart = ({ sellerData }) => {
       if (!seller) return; // Skip null/undefined sellers
       
       // Default to cluster 1 (medium) if prediction is missing
-      const cluster = seller.prediction != null ? seller.prediction : 1;
+      const cluster = seller.prediction !== undefined && seller.prediction !== null ? seller.prediction : 1;
       
       if (!clusters[cluster]) {
         clusters[cluster] = [];
       }
       
-      // Use order_count instead of requiring products_sold
-      // This addresses the "Missing required column: products_sold" error
-      const size = seller.order_count || 20; // Default size if order_count is missing
+      // Validate and parse total_sales
+      let totalSales = parseFloat(seller.total_sales);
+      if (isNaN(totalSales)) {
+        console.warn(`Missing or invalid total_sales for seller ${seller.seller_id || 'unknown'}. Defaulting to 0.`);
+        totalSales = 0;
+      }
       
-      // Normalize values to handle potential outliers and ensure valid data
+      // Validate and parse avg_processing_time
+      let processingTime = parseFloat(seller.avg_processing_time);
+      if (isNaN(processingTime)) {
+        console.warn(`Missing or invalid avg_processing_time for seller ${seller.seller_id || 'unknown'}. Defaulting to 0.`);
+        processingTime = 0;
+      }
+      
+      // Validate order_count; default to 20 if missing or invalid
+      let orderCount = parseFloat(seller.order_count);
+      if (isNaN(orderCount) || orderCount <= 0) {
+        console.warn(`Missing or invalid order_count for seller ${seller.seller_id || 'unknown'}. Defaulting to 20.`);
+        orderCount = 20;
+      }
+      
       clusters[cluster].push({
-        x: parseFloat(seller.total_sales) || 0,
-        y: parseFloat(seller.avg_processing_time) || 0,
-        z: size,
+        x: totalSales,
+        y: processingTime,
+        z: orderCount,
         name: seller.seller_id || `Seller ${clusters[cluster].length + 1}`
       });
     });
@@ -55,7 +71,7 @@ const SellerPerformanceChart = ({ sellerData }) => {
     2: 'Low Performers'
   };
   
-  // Custom tooltip
+  // Custom tooltip to display seller details
   const CustomTooltip = ({ active, payload }) => {
     if (active && payload && payload.length) {
       const data = payload[0].payload;
@@ -106,12 +122,11 @@ const SellerPerformanceChart = ({ sellerData }) => {
             dataKey="y"
             name="Processing Time"
             unit=" days"
-            label={{ value: 'Processing Time (days)', angle: -90, position: 'left', offset: 0 }}
+            label={{ value: 'Processing Time (days)', angle: -90, position: 'insideLeft', offset: 0 }}
           />
           <ZAxis type="number" dataKey="z" range={[50, 400]} />
           <Tooltip content={<CustomTooltip />} />
           <Legend />
-          
           {processedData.map((cluster) => (
             <Scatter
               key={cluster.cluster}

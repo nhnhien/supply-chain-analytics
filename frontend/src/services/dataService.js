@@ -64,10 +64,12 @@ export async function loadCsvData(filePath, mockDataGenerator) {
                 }
               }
               if (row.date && typeof row.date === 'string') {
-                try {
-                  row.date = new Date(row.date);
-                } catch (error) {
-                  console.warn(`Could not parse date: ${row.date}`);
+                const parsedDate = new Date(row.date);
+                if (isNaN(parsedDate.getTime())) {
+                  console.warn(`Invalid date string encountered: ${row.date}. Setting date to null.`);
+                  row.date = null;
+                } else {
+                  row.date = parsedDate;
                 }
               }
               if (!row.date && (row.order_year || row.year) && (row.order_month || row.month)) {
@@ -77,6 +79,7 @@ export async function loadCsvData(filePath, mockDataGenerator) {
                   row.date = new Date(year, month, 1);
                 }
               }
+
               return row;
             });
           resolve(processedData);

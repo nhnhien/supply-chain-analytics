@@ -46,21 +46,28 @@ const processHistoricalData = (categoryData) => {
 const ForecastInterpretation = ({ forecast }) => {
   if (!forecast) return null;
 
-  const hasGrowthRate = forecast.growth_rate != null && !isNaN(parseFloat(forecast.growth_rate));
-  const hasMape = forecast.mape != null && !isNaN(parseFloat(forecast.mape));
-  const hasRmse = forecast.rmse != null && !isNaN(parseFloat(forecast.rmse));
-  const hasHistoricalDemand = forecast.avg_historical_demand != null && !isNaN(parseFloat(forecast.avg_historical_demand));
+  // Ensure forecast fields are valid numbers or fallback to defaults
+  const growthRateRaw = parseNumericValue(forecast.growth_rate, 0);
+  const mapeRaw = parseNumericValue(forecast.mape, 30);
+  const rmseRaw = parseNumericValue(forecast.rmse, null);
+  const histDemand = parseNumericValue(forecast.avg_historical_demand, null);
   const dataQuality = forecast.data_quality || 'Unknown';
-
-  const growthRate = hasGrowthRate ? Math.max(Math.min(parseFloat(forecast.growth_rate), 100), -80) : 0;
-  const mape = hasMape ? Math.min(parseFloat(forecast.mape), 100) : 30;
-
+  
+  const hasGrowthRate = growthRateRaw !== null;
+  const hasMape = mapeRaw !== null;
+  const hasRmse = rmseRaw !== null;
+  const hasHistoricalDemand = histDemand !== null;
+  
+  // Bound growth rate between -80 and 100
+  const growthRate = hasGrowthRate ? Math.max(Math.min(growthRateRaw, 100), -80) : 0;
+  const mape = hasMape ? Math.min(mapeRaw, 100) : 30;
+  
   let interpretationText = '';
 
   if (dataQuality === 'Limited') {
-    interpretationText = `The ${forecast.category} category has limited historical data, which affects forecast reliability. `;
-    if (hasHistoricalDemand && parseFloat(forecast.avg_historical_demand) > 0) {
-      interpretationText += `Historical average demand is ${Math.round(forecast.avg_historical_demand)} units. `;
+    interpretationText = `The ${forecast.category || 'this'} category has limited historical data, which affects forecast reliability. `;
+    if (hasHistoricalDemand && histDemand > 0) {
+      interpretationText += `Historical average demand is ${Math.round(histDemand)} units. `;
       if (hasGrowthRate) {
         const growthDirection = growthRate > 0 ? 'growth' : 'decline';
         interpretationText += `The forecast suggests a ${Math.abs(growthRate).toFixed(1)}% ${growthDirection}, but this should be treated as an estimate given the limited data. `;
@@ -83,32 +90,30 @@ const ForecastInterpretation = ({ forecast }) => {
       forecastConfidence = "High confidence: ";
     }
     if (growthRate <= -50) {
-      interpretationText += `${forecastConfidence}The ${forecast.category} category shows a significant decline (${Math.abs(growthRate).toFixed(1)}%). `;
+      interpretationText += `${forecastConfidence}The ${forecast.category || 'selected'} category shows a significant decline (${Math.abs(growthRate).toFixed(1)}%). `;
       interpretationText += `Consider substantially reducing inventory and investigating potential market shifts.`;
     } else if (growthRate < -20) {
-      interpretationText += `${forecastConfidence}The ${forecast.category} category shows a strong decline (${Math.abs(growthRate).toFixed(1)}%). `;
+      interpretationText += `${forecastConfidence}The ${forecast.category || 'selected'} category shows a strong decline (${Math.abs(growthRate).toFixed(1)}%). `;
       interpretationText += `Consider reducing inventory and exploring product/marketing improvements.`;
     } else if (growthRate < 0) {
-      interpretationText += `${forecastConfidence}The ${forecast.category} category shows a moderate decline (${Math.abs(growthRate).toFixed(1)}%). `;
+      interpretationText += `${forecastConfidence}The ${forecast.category || 'selected'} category shows a moderate decline (${Math.abs(growthRate).toFixed(1)}%). `;
       interpretationText += `Consider slight inventory reductions while monitoring trends.`;
     } else if (growthRate > 50) {
-      interpretationText += `${forecastConfidence}The ${forecast.category} category shows exceptional growth (${growthRate.toFixed(1)}%). `;
+      interpretationText += `${forecastConfidence}The ${forecast.category || 'selected'} category shows exceptional growth (${growthRate.toFixed(1)}%). `;
       interpretationText += `Consider significantly increasing inventory and expanding supplier capacity.`;
     } else if (growthRate > 20) {
-      interpretationText += `${forecastConfidence}The ${forecast.category} category shows strong growth (${growthRate.toFixed(1)}%). `;
+      interpretationText += `${forecastConfidence}The ${forecast.category || 'selected'} category shows strong growth (${growthRate.toFixed(1)}%). `;
       interpretationText += `Consider increasing inventory and securing additional supply.`;
     } else if (growthRate > 5) {
-      interpretationText += `${forecastConfidence}The ${forecast.category} category shows moderate growth (${growthRate.toFixed(1)}%). `;
+      interpretationText += `${forecastConfidence}The ${forecast.category || 'selected'} category shows moderate growth (${growthRate.toFixed(1)}%). `;
       interpretationText += `Maintain current inventory levels with slight increases.`;
     } else {
-      interpretationText += `${forecastConfidence}The ${forecast.category} category shows stable demand (${growthRate.toFixed(1)}%). `;
+      interpretationText += `${forecastConfidence}The ${forecast.category || 'selected'} category shows stable demand (${growthRate.toFixed(1)}%). `;
       interpretationText += `Maintain current inventory levels.`;
     }
-    if (hasHistoricalDemand && hasRmse) {
-      const histDemand = parseFloat(forecast.avg_historical_demand);
-      const rmseValue = parseFloat(forecast.rmse);
-      const rmsePercentage = (rmseValue / histDemand * 100).toFixed(1);
-      interpretationText += ` Typical forecast error is about ${rmsePercentage}% (${Math.round(rmseValue)} units).`;
+    if (hasHistoricalDemand && hasRmse && histDemand > 0) {
+      const rmsePercentage = (rmseRaw / histDemand * 100).toFixed(1);
+      interpretationText += ` Typical forecast error is about ${rmsePercentage}% (${Math.round(rmseRaw)} units).`;
     }
   }
   
@@ -163,7 +168,11 @@ const DemandForecastPage = ({ data }) => {
   // Set initial category if not already set
   useEffect(() => {
     if (validForecastReport.length > 0 && !selectedCategory) {
-      setSelectedCategory(validForecastReport[0].category);
+      // Filter out any forecast items missing a valid category
+      const firstValid = validForecastReport.find(f => f.category);
+      if (firstValid) {
+        setSelectedCategory(firstValid.category);
+      }
     }
   }, [validForecastReport, selectedCategory]);
 
@@ -176,9 +185,9 @@ const DemandForecastPage = ({ data }) => {
     const categoryForecast = forecastReport.find(forecast => forecast.category === selectedCategory);
     if (categoryForecast && historicalData.length > 0) {
       const lastPoint = historicalData[historicalData.length - 1];
-      const forecastValue = parseFloat(categoryForecast.forecast_demand || categoryForecast.next_month_forecast || 0);
+      const forecastValue = parseNumericValue(categoryForecast.forecast_demand || categoryForecast.next_month_forecast, 0);
       const growthRate = categoryForecast.growth_rate != null
-        ? Math.max(Math.min(parseFloat(categoryForecast.growth_rate), 100), -80) / 100
+        ? Math.max(Math.min(parseNumericValue(categoryForecast.growth_rate, 0), 100), -80) / 100
         : 0;
       const forecastPoints = [];
       for (let i = 1; i <= 6; i++) {
@@ -199,7 +208,7 @@ const DemandForecastPage = ({ data }) => {
           }
         }
         const mape = categoryForecast.mape != null
-          ? Math.min(parseFloat(categoryForecast.mape), 100) / 100
+          ? Math.min(parseNumericValue(categoryForecast.mape, 20), 100) / 100
           : 0.2;
         const errorFactor = mape * (1 + (i - 1) * 0.2);
         const lowerBound = Math.max(pointValue * (1 - errorFactor), 0);
@@ -215,10 +224,10 @@ const DemandForecastPage = ({ data }) => {
       const combinedData = [...historicalData, ...forecastPoints];
       setForecastData(combinedData);
       setHasVisualizationData(true);
-      const mapeValue = categoryForecast.mape;
-      if (mapeValue && mapeValue > 50) {
+      const mapeValue = parseNumericValue(categoryForecast.mape, 0);
+      if (mapeValue > 50) {
         setForecastNote('Note: High forecast uncertainty. Consider this visualization as indicative only.');
-      } else if (mapeValue && mapeValue > 25) {
+      } else if (mapeValue > 25) {
         setForecastNote('Note: Moderate forecast uncertainty. Treat projections as directional estimates.');
       } else {
         setForecastNote('');
@@ -241,9 +250,10 @@ const DemandForecastPage = ({ data }) => {
   };
 
   const getCurrentCategoryForecast = () => {
-    if (!data || !data.forecastReport) return null;
+    if (!data || !data.forecastReport) return [];
     return getValidArray(data.forecastReport)
-      .filter(f => f && f.category === selectedCategory)
+      .filter(f => f && f.category)
+      .filter(f => f.category === selectedCategory)
       .map(forecast => ({
         ...forecast,
         avg_historical_demand: Math.max(parseNumericValue(forecast.avg_historical_demand, 0), 0),
@@ -276,11 +286,13 @@ const DemandForecastPage = ({ data }) => {
                 label="Product Category"
                 onChange={handleCategoryChange}
               >
-                {getValidArray(data.forecastReport).map(forecast => (
-                  <MenuItem key={forecast.category} value={forecast.category}>
-                    {forecast.category}
-                  </MenuItem>
-                ))}
+                {getValidArray(data.forecastReport)
+                  .filter(forecast => forecast && forecast.category)
+                  .map(forecast => (
+                    <MenuItem key={forecast.category} value={forecast.category}>
+                      {forecast.category}
+                    </MenuItem>
+                  ))}
               </Select>
             </FormControl>
           </Paper>
@@ -383,13 +395,13 @@ const DemandForecastPage = ({ data }) => {
             <Typography component="h2" variant="h6" color="primary" gutterBottom>
               Forecast Statistics
             </Typography>
-            {getValidArray(getCurrentCategoryForecast()) && getCurrentCategoryForecast().map(forecast => (
+            {getValidArray(getCurrentCategoryForecast()).map(forecast => (
               <Box key={forecast.category} sx={{ mb: 2 }}>
                 {/* Render cards with forecast details (omitted for brevity) */}
               </Box>
             ))}
             {/* Forecast Interpretation */}
-            <ForecastInterpretation forecast={getCurrentCategoryForecast() && getCurrentCategoryForecast()[0]} />
+            <ForecastInterpretation forecast={getValidArray(getCurrentCategoryForecast())[0]} />
           </Paper>
         </Grid>
 

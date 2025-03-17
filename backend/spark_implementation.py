@@ -317,6 +317,13 @@ class SparkSupplyChainAnalytics:
             else:
                 print(f"Warning: Forecast data file not found at {forecast_data}")
                 return self, pd.DataFrame()
+
+        # Ensure forecast_data has the required columns; if missing, add them with default NaN values.
+        required_forecast_cols = ['avg_historical_demand', 'growth_rate', 'lead_time_days', 'demand_std', 'forecast_demand', 'next_month_forecast']
+        for col_name in required_forecast_cols:
+            if col_name not in forecast_data.columns:
+                forecast_data[col_name] = np.nan
+
         category_col = None
         for col_name in ['category', 'product_category', 'product_category_name']:
             if col_name in forecast_data.columns:
@@ -325,40 +332,65 @@ class SparkSupplyChainAnalytics:
         if not category_col:
             print("Warning: No category column found in forecast data")
             return self, pd.DataFrame()
+
         recommendations = []
         for index, forecast_row in forecast_data.iterrows():
-            category = forecast_row[category_col]
+            try:
+                category = forecast_row[category_col]
+            except Exception as e:
+                print(f"Error accessing category in forecast row {index}: {e}")
+                continue
             if not category or pd.isna(category):
                 continue
             category_data = self.unified_df.filter(self.unified_df["product_category_name"] == category)
             if category_data.count() == 0:
                 continue
-            avg_demand = forecast_row.get('avg_historical_demand')
-            if avg_demand is None or pd.isna(avg_demand):
+            try:
+                avg_demand = forecast_row.get('avg_historical_demand', np.nan)
+            except Exception as e:
+                print(f"Error accessing avg_historical_demand for category {category}: {e}")
+                avg_demand = np.nan
+            if pd.isna(avg_demand):
                 try:
                     monthly_demand = category_data.groupBy("order_year", "order_month") \
                                    .agg(count("order_id").alias("count"))
                     avg_demand = monthly_demand.agg(avg("count")).collect()[0][0]
                     if avg_demand is None:
                         avg_demand = 100
-                except Exception:
+                except Exception as e:
+                    print(f"Error calculating avg_demand for category {category}: {e}")
                     avg_demand = 100
             forecast_demand = None
             for field_name in ['forecast_demand', 'next_month_forecast']:
-                if field_name in forecast_row and not pd.isna(forecast_row[field_name]):
-                    forecast_demand = forecast_row[field_name]
-                    break
+                try:
+                    if field_name in forecast_data.columns and not pd.isna(forecast_row[field_name]):
+                        forecast_demand = forecast_row[field_name]
+                        break
+                except Exception as e:
+                    print(f"Error accessing {field_name} for category {category}: {e}")
             if forecast_demand is None:
-                const_growth = forecast_row.get('growth_rate', 0)
-                if const_growth is not None and not pd.isna(const_growth):
-                    forecast_demand = avg_demand * (1 + const_growth / 100)
-                else:
+                try:
+                    const_growth = forecast_row.get('growth_rate', 0)
+                    if const_growth is not None and not pd.isna(const_growth):
+                        forecast_demand = avg_demand * (1 + const_growth / 100)
+                    else:
+                        forecast_demand = avg_demand
+                except Exception as e:
+                    print(f"Error calculating forecast_demand for category {category}: {e}")
                     forecast_demand = avg_demand
-            lead_time_days = forecast_row.get('lead_time_days')
-            if lead_time_days is None or pd.isna(lead_time_days):
+            try:
+                lead_time_days = forecast_row.get('lead_time_days', np.nan)
+            except Exception as e:
+                print(f"Error accessing lead_time_days for category {category}: {e}")
+                lead_time_days = np.nan
+            if pd.isna(lead_time_days):
                 lead_time_days = 7
-            demand_std = forecast_row.get('demand_std')
-            if demand_std is None or pd.isna(demand_std):
+            try:
+                demand_std = forecast_row.get('demand_std', np.nan)
+            except Exception as e:
+                print(f"Error accessing demand_std for category {category}: {e}")
+                demand_std = np.nan
+            if pd.isna(demand_std):
                 demand_std = avg_demand * 0.3
             service_factor = 1.645
             lead_time_months = lead_time_days / 30.0
@@ -370,16 +402,25 @@ class SparkSupplyChainAnalytics:
                 avg_item_cost = category_data.agg(avg("price")).collect()[0][0]
                 if avg_item_cost is None or avg_item_cost <= 0:
                     avg_item_cost = 50
-            except Exception:
+            except Exception as e:
+                print(f"Error calculating avg_item_cost for category {category}: {e}")
                 avg_item_cost = 50
             annual_demand = avg_demand * 12
             order_cost = 50
             holding_cost_pct = 0.2
             holding_cost = avg_item_cost * holding_cost_pct
-            eoq = (2 * annual_demand * order_cost / holding_cost) ** 0.5
-            order_frequency = annual_demand / eoq
-            days_between_orders = 365 / order_frequency
-            const_growth = forecast_row.get('growth_rate', 0)
+            try:
+                eoq = (2 * annual_demand * order_cost / holding_cost) ** 0.5
+            except Exception as e:
+                print(f"Error calculating EOQ for category {category}: {e}")
+                eoq = 1
+            order_frequency = annual_demand / eoq if eoq != 0 else annual_demand
+            days_between_orders = 365 / order_frequency if order_frequency != 0 else 365
+            try:
+                const_growth = forecast_row.get('growth_rate', 0)
+            except Exception as e:
+                print(f"Error accessing growth_rate for category {category}: {e}")
+                const_growth = 0
             if pd.isna(const_growth):
                 const_growth = 0
             recommendations.append({

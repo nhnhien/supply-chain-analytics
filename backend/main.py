@@ -168,7 +168,7 @@ def run_pandas_analysis(args):
     
     orders = calculate_delivery_days(orders)
     
-    print("Building unified dataset...")
+    print("Building unified dataset...");
     supply_chain = orders.merge(order_items, on='order_id', how='inner')
     supply_chain = supply_chain.merge(products, on='product_id', how='left')
     supply_chain = supply_chain.merge(customers, on='customer_id', how='left')
@@ -178,7 +178,7 @@ def run_pandas_analysis(args):
     supply_chain = supply_chain.merge(products, on='product_id', how='left')
     supply_chain = supply_chain.merge(customers, on='customer_id', how='left')
     
-    print("Analyzing monthly demand patterns...")
+    print("Analyzing monthly demand patterns...");
     monthly_demand = (supply_chain.groupby(['product_category_name', 'order_year', 'order_month'])
                       .size().reset_index(name='count'))
     monthly_demand.to_csv(os.path.join(args.output_dir, 'monthly_demand.csv'), index=False)
@@ -190,7 +190,7 @@ def run_pandas_analysis(args):
         os.path.join(args.output_dir, 'top_categories.csv'), index=False
     )
     
-    print("Running time series forecasting...")
+    print("Running time series forecasting...");
     forecaster = DemandForecaster(os.path.join(args.output_dir, 'monthly_demand.csv'))
     forecaster.preprocess_data()
     if args.use_auto_arima:
@@ -204,7 +204,7 @@ def run_pandas_analysis(args):
     
     forecast_report = forecaster.generate_forecast_report(os.path.join(args.output_dir, 'forecast_report.csv'))
     
-    print("Analyzing seller performance...")
+    print("Analyzing seller performance...");
     seller_performance = (supply_chain.groupby('seller_id')
                           .agg({'order_id': 'count',
                                 'processing_time': 'mean',
@@ -229,10 +229,17 @@ def run_pandas_analysis(args):
         (seller_performance['on_time_delivery_rate'] / 100) * 25
     )
     
-    # Clustering steps (omitted here for brevity; assume clustering is performed)
-    # For this revision, we assume seller_performance remains as computed
+    # Perform clustering on seller performance using a quantile-based approach.
+    seller_performance = seller_performance.copy()
+    # Use qcut to divide sellers into 3 clusters: 0 (High), 1 (Medium), 2 (Low)
+    seller_performance['prediction'] = pd.qcut(seller_performance['seller_score'], q=3, labels=[0, 1, 2]).astype(int)
     
-    print("Analyzing geographical patterns...")
+    # Save seller performance clusters to CSV.
+    seller_clusters_file = os.path.join(args.output_dir, 'seller_clusters.csv')
+    seller_performance.to_csv(seller_clusters_file, index=False)
+    print(f"Seller clusters saved to {seller_clusters_file}");
+    
+    print("Analyzing geographical patterns...");
     state_metrics = (supply_chain.groupby('customer_state')
                      .agg({'order_id': 'count',
                            'processing_time': 'mean',
@@ -262,7 +269,7 @@ def run_pandas_analysis(args):
         pd.DataFrame(top_category_by_state).to_csv(
             os.path.join(args.output_dir, 'top_category_by_state.csv'), index=False)
     
-    print("Generating supply chain recommendations...")
+    print("Generating supply chain recommendations...");
     recommendations = []
     for category in top_categories:
         if category in forecasts:
@@ -304,10 +311,9 @@ def run_pandas_analysis(args):
     recommendations_df = pd.DataFrame(recommendations)
     recommendations_df.to_csv(os.path.join(args.output_dir, 'reorder_recommendations.csv'), index=False)
     
-    print("Creating visualizations...")
+    print("Creating visualizations...");
     visualizer = SupplyChainVisualizer(output_dir=args.output_dir)
     
-    # Ensure monthly_demand has a proper date column for visualization
     monthly_demand['date'] = pd.to_datetime(
         monthly_demand['order_year'].astype(str) + '-' + 
         monthly_demand['order_month'].astype(str).str.zfill(2) + '-01'
@@ -319,9 +325,6 @@ def run_pandas_analysis(args):
     visualizer.visualize_seller_clusters(seller_performance)
     visualizer.visualize_reorder_recommendations(recommendations_df)
     
-    # Revised dashboard call: ensure data types match the expected parameters.
-    # Here we pass the monthly_demand (filtered to top 10 categories), seller_performance,
-    # forecasts (dictionary of forecast DataFrames), and recommendations_df.
     visualizer.create_supply_chain_dashboard(
         monthly_demand[monthly_demand['product_category_name'].isin(top_categories[:10])],
         seller_performance,
@@ -372,7 +375,7 @@ def main():
     ensure_directory(args.output_dir)
     results = run_pandas_analysis(args)
     
-    print("Generating summary report...")
+    print("Generating summary report...");
     report = [
         "# Supply Chain Analytics for Demand Forecasting",
         f"## Report Generated on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
@@ -391,7 +394,6 @@ def main():
     report.append("")
     
     report.append("#### Demand Forecast Highlights")
-    # Use the forecasts dictionary instead of an undefined variable
     for category, forecast_df in list(results['forecasts'].items())[:5]:
         avg_forecast = forecast_df['forecast'].mean()
         report.append(f"- {category}: Avg. forecasted demand {avg_forecast:.1f} units/month")

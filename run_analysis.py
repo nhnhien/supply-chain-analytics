@@ -43,7 +43,6 @@ def clean_directory(directory):
             print(f"Cleaned directory: {directory}")
         except Exception as e:
             print(f"Error cleaning directory: {e}")
-    
     ensure_directory(directory)
 
 def check_dependencies():
@@ -77,6 +76,27 @@ def check_dependencies():
     
     return True
 
+def check_required_files(output_dir):
+    """
+    Check that all required CSV files exist in the output directory.
+    If any are missing, log an error and return False.
+    """
+    required_files = [
+        "monthly_demand.csv",
+        "forecast_report.csv",
+        "seller_clusters.csv",
+        "reorder_recommendations.csv"
+    ]
+    missing_files = []
+    for file in required_files:
+        if not os.path.exists(os.path.join(output_dir, file)):
+            missing_files.append(file)
+    if missing_files:
+        print("Error: The following required files are missing:")
+        for f in missing_files:
+            print(f"  - {f}")
+        return False
+    return True
 
 def run_analysis(args):
     """Run the main analysis using parsed arguments"""
@@ -231,6 +251,11 @@ def main():
     
     # Run main analysis
     if not run_analysis(args):
+        return 1
+    
+    # Check that all required output files were generated
+    if not check_required_files(args.output_dir):
+        print("Error: Required output files are missing. Please check the analysis logs.")
         return 1
     
     # Run additional supplier analysis
