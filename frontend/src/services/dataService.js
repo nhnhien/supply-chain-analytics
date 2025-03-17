@@ -442,14 +442,16 @@ function extractForecastPerformance(forecastReport) {
     console.warn('extractForecastPerformance received non-array data');
     return [];
   }
-  return forecastReport.filter(row => row && row.category).map(row => ({
-    category: row.category || row.product_category,
-    mape: parseFloat(row.mape) || null,
-    rmse: parseFloat(row.rmse) || null,
-    mae: parseFloat(row.mae) || null,
-    growth_rate: parseFloat(row.growth_rate) || 0,
-    data_quality: row.data_quality || 'Unknown'
-  }));
+  return forecastReport
+    .filter(row => row && (row.category || row.product_category))
+    .map(row => ({
+      category: row.category || row.product_category,
+      mape: parseFloat(row.mape) || null,
+      rmse: parseFloat(row.rmse) || null,
+      mae: parseFloat(row.mae) || null,
+      growth_rate: parseFloat(row.growth_rate) || 0,
+      data_quality: row.data_quality || 'Unknown'
+    }));
 }
 
 /**

@@ -239,6 +239,7 @@ const DemandForecastPage = ({ data }) => {
     }
   }, [selectedCategory, data, validForecastReport]);
 
+
   const handleCategoryChange = (event) => {
     setSelectedCategory(event.target.value);
   };

@@ -23,8 +23,8 @@ app.use('/data', express.static(OUTPUT_DIR));
 app.post('/api/run-analysis', (req, res) => {
   const { dataDir, topN, forecastPeriods, useSpark } = req.body;
   
-  // Create command with parameters. Note: output directory is taken from OUTPUT_DIR.
-  let command = `python main.py --data-dir=${dataDir || '.'} --output-dir=${OUTPUT_DIR} --top-n=${topN || 5} --forecast-periods=${forecastPeriods || 6}`;
+  // Updated command: reference python script in the backend directory.
+  let command = `python backend/main.py --data-dir=${dataDir || '.'} --output-dir=${OUTPUT_DIR} --top-n=${topN || 5} --forecast-periods=${forecastPeriods || 6}`;
   
   if (useSpark) {
     command += ' --use-spark';
@@ -161,8 +161,9 @@ app.get('/api/dashboard-data', (req, res) => {
           const records = parse(data, { columns: true, skip_empty_lines: true });
           resolve({ key, data: records });
         } catch (parseError) {
-          console.error(`Error parsing ${key} CSV: ${parseError}`);
-          return reject(parseError);
+          console.error(`Error parsing ${key} CSV: ${parseError}. Returning empty array as fallback.`);
+          // Instead of rejecting, resolve with an empty array for this file.
+          resolve({ key, data: [] });
         }
       });
     });
@@ -175,7 +176,7 @@ app.get('/api/dashboard-data', (req, res) => {
         return acc;
       }, {});
       
-      // Helper function to process demand data with normalization
+      // Helper functions defined inline for dashboard processing.
       function processDemandData(data) {
         return data.map(row => {
           if (!row) return null;

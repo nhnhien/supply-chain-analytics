@@ -538,24 +538,31 @@ class DemandForecaster:
             return result
 
     def _create_empty_forecast_results(self, category, ts):
+        # Set a default average value based on ts
         avg_value = 100 if ts.empty else abs(ts.mean())
         periods = 6
+
+        # Determine a forecast index robustly.
         try:
-            if isinstance(ts.index[-1], pd.Timestamp) and not ts.empty:
+            if not ts.empty and isinstance(ts.index[-1], pd.Timestamp):
                 last_date = ts.index[-1]
                 forecast_index = pd.date_range(start=last_date, periods=periods+1, freq='MS')[1:]
-            else:
-                if not ts.empty:
-                    try:
-                        last_idx = int(ts.index[-1])
-                        forecast_index = range(last_idx + 1, last_idx + periods + 1)
-                    except Exception:
-                        forecast_index = range(periods)
-                else:
+            elif not ts.empty:
+                try:
+                    last_idx = int(ts.index[-1])
+                    forecast_index = range(last_idx + 1, last_idx + periods + 1)
+                except Exception:
                     forecast_index = range(periods)
+            else:
+                forecast_index = range(periods)
         except Exception as e:
             print(f"Error creating fallback forecast index for {category}: {e}")
             forecast_index = range(periods)
+
+        # Initialize forecast_values and growth_rate to default values
+        forecast_values = None
+        growth_rate = None
+
         if ts.shape[0] >= 2:
             last_n = min(6, ts.shape[0])
             last_points = ts.iloc[-last_n:]
@@ -563,9 +570,7 @@ class DemandForecaster:
             y = last_points.values
             try:
                 slope, intercept = np.polyfit(x, y, 1)
-                significant_decline = False
-                if slope < 0 and abs(slope) > (0.5 * avg_value / last_n):
-                    significant_decline = True
+                significant_decline = (slope < 0) and (abs(slope) > (0.5 * avg_value / last_n))
                 last_value = ts.iloc[-1]
                 if significant_decline:
                     min_value = max(0.1 * avg_value, 1)
@@ -589,12 +594,15 @@ class DemandForecaster:
         else:
             forecast_values = [max(avg_value * 0.9, 1)] * periods
             growth_rate = -10
+
+        # Build forecast DataFrame
         forecast_df = pd.DataFrame({
             'forecast': forecast_values,
             'lower_ci': [max(v * 0.7, 0) for v in forecast_values],
             'upper_ci': [v * 1.3 for v in forecast_values]
         }, index=forecast_index)
         self.forecasts[category] = forecast_df
+
         rmse = ts.std() if ts.shape[0] > 1 else avg_value * 0.2
         self.performance[category] = {
             'mae': avg_value * 0.15 if ts.shape[0] > 0 else None,
@@ -602,6 +610,7 @@ class DemandForecaster:
             'mape': min(30, abs(growth_rate) + 10)
         }
         self.growth_rates[category] = growth_rate
+
         visualization_data = []
         for date, value in zip(ts.index, ts.values):
             visualization_data.append({
@@ -617,7 +626,6 @@ class DemandForecaster:
                 'upperBound': float(upper),
                 'type': 'forecast'
             })
-        # Log a fallback forecast note (you might want to store this differently)
         print(f"Fallback forecast used for {category} due to errors or insufficient data.")
         return {
             'model': None,
@@ -629,6 +637,7 @@ class DemandForecaster:
             'visualization_data': visualization_data,
             'growth_rate': growth_rate
         }
+
 
     def run_all_forecasts(self, top_n=5, periods=6):
         if not hasattr(self, 'category_data'):

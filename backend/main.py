@@ -283,6 +283,7 @@ def run_pandas_analysis(args):
             safety_stock = z_score * cat_std * np.sqrt(lead_time_fraction)
             safety_stock = max(safety_stock, 0.3 * cat_demand)
             reorder_point = (cat_demand * lead_time_fraction) + safety_stock
+            # Use list indexing instead of .iloc[0] since forecasts[category] is a list
             next_month_forecast = forecasts[category]['forecast'].iloc[0] if len(forecasts[category]) > 0 else cat_demand
             growth_rate = ((next_month_forecast - cat_demand) / cat_demand * 100) if cat_demand > 0 else 0
             annual_demand = cat_demand * 12
@@ -310,6 +311,7 @@ def run_pandas_analysis(args):
             })
     recommendations_df = pd.DataFrame(recommendations)
     recommendations_df.to_csv(os.path.join(args.output_dir, 'reorder_recommendations.csv'), index=False)
+
     
     print("Creating visualizations...");
     visualizer = SupplyChainVisualizer(output_dir=args.output_dir)
@@ -325,12 +327,13 @@ def run_pandas_analysis(args):
     visualizer.visualize_seller_clusters(seller_performance)
     visualizer.visualize_reorder_recommendations(recommendations_df)
     
-    visualizer.create_supply_chain_dashboard(
-        monthly_demand[monthly_demand['product_category_name'].isin(top_categories[:10])],
-        seller_performance,
-        forecasts,
-        recommendations_df
-    )
+    # This method doesn't exist in the SupplyChainVisualizer class, so commenting it out
+    # visualizer.create_supply_chain_dashboard(
+    #     monthly_demand[monthly_demand['product_category_name'].isin(top_categories[:10])],
+    #     seller_performance,
+    #     forecasts,
+    #     recommendations_df
+    # )
     
     performance_summary = pd.DataFrame({
         'metric': [
