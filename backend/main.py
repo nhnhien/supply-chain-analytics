@@ -178,10 +178,29 @@ def run_pandas_analysis(args):
     supply_chain = supply_chain.merge(products, on='product_id', how='left')
     supply_chain = supply_chain.merge(customers, on='customer_id', how='left')
     
-    print("Analyzing monthly demand patterns...");
+    print("Analyzing monthly demand patterns...")
+
+    # Group by product category, year, and month, and count records
     monthly_demand = (supply_chain.groupby(['product_category_name', 'order_year', 'order_month'])
-                      .size().reset_index(name='count'))
+                    .size().reset_index(name='count'))
+
+    # Ensure order_year and order_month are valid integers; use defaults if missing
+    monthly_demand['order_year'] = pd.to_numeric(monthly_demand['order_year'], errors='coerce').fillna(1970).astype(int)
+    monthly_demand['order_month'] = pd.to_numeric(monthly_demand['order_month'], errors='coerce').fillna(1).astype(int)
+
+    # Create a date string and convert it to a datetime object, coercing errors to NaT
+    monthly_demand['date'] = pd.to_datetime(
+        monthly_demand['order_year'].astype(str) + '-' + 
+        monthly_demand['order_month'].astype(str).str.zfill(2) + '-01',
+        errors='coerce'
+    )
+
+    # Fill any NaT values with a default date
+    monthly_demand['date'] = monthly_demand['date'].fillna(pd.Timestamp('1970-01-01'))
+
+    # Save the processed monthly demand data to CSV
     monthly_demand.to_csv(os.path.join(args.output_dir, 'monthly_demand.csv'), index=False)
+
     
     top_categories = get_top_categories(monthly_demand, args.top_n)
     print(f"Top {len(top_categories)} categories by volume: {', '.join(top_categories)}")

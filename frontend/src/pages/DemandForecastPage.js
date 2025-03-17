@@ -150,7 +150,7 @@ const DemandForecastPage = ({ data }) => {
   const [hasVisualizationData, setHasVisualizationData] = useState(false);
 
   // Memoize valid forecast report and performance metrics to avoid re-computation
-  const validForecastReport = useMemo(() => getValidArray(data?.forecastReport) || [], [data]);
+  const validForecastReport = useMemo(() => getValidArray(data?.forecastReport) || [], [data?.forecastReport]);
   const performanceMetrics = useMemo(() => {
     if (!data?.performanceMetrics) return [];
     return getValidArray(data.performanceMetrics)
@@ -182,7 +182,14 @@ const DemandForecastPage = ({ data }) => {
     const forecastReport = validForecastReport;
     const categoryData = getCategoryData(data, selectedCategory);
     const historicalData = processHistoricalData(categoryData);
-    const categoryForecast = forecastReport.find(forecast => forecast.category === selectedCategory);
+    
+    // Updated to check multiple possible category field names
+    const categoryForecast = forecastReport.find(forecast => 
+      forecast.category === selectedCategory || 
+      forecast.product_category === selectedCategory ||
+      forecast.product_category_name === selectedCategory
+    );
+    
     if (categoryForecast && historicalData.length > 0) {
       const lastPoint = historicalData[historicalData.length - 1];
       const forecastValue = parseNumericValue(categoryForecast.forecast_demand || categoryForecast.next_month_forecast, 0);
@@ -253,8 +260,11 @@ const DemandForecastPage = ({ data }) => {
   const getCurrentCategoryForecast = () => {
     if (!data || !data.forecastReport) return [];
     return getValidArray(data.forecastReport)
-      .filter(f => f && f.category)
-      .filter(f => f.category === selectedCategory)
+      .filter(f => f && (
+        f.category === selectedCategory || 
+        f.product_category === selectedCategory || 
+        f.product_category_name === selectedCategory
+      ))
       .map(forecast => ({
         ...forecast,
         avg_historical_demand: Math.max(parseNumericValue(forecast.avg_historical_demand, 0), 0),
@@ -287,13 +297,23 @@ const DemandForecastPage = ({ data }) => {
                 label="Product Category"
                 onChange={handleCategoryChange}
               >
-                {getValidArray(data.forecastReport)
-                  .filter(forecast => forecast && forecast.category)
-                  .map(forecast => (
-                    <MenuItem key={forecast.category} value={forecast.category}>
-                      {forecast.category}
-                    </MenuItem>
-                  ))}
+{getValidArray(data.forecastReport)
+  .filter(forecast => forecast && (
+    forecast.category || 
+    forecast.product_category || 
+    forecast.product_category_name
+  ))
+  .map(forecast => {
+    // Get the actual category name from whatever field it's in
+    const categoryName = forecast.category || 
+                         forecast.product_category || 
+                         forecast.product_category_name;
+    return (
+      <MenuItem key={categoryName} value={categoryName}>
+        {categoryName}
+      </MenuItem>
+    );
+  })}
               </Select>
             </FormControl>
           </Paper>

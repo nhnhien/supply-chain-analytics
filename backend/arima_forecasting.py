@@ -370,14 +370,29 @@ class DemandForecaster:
         return min(mape, 100)
 
     def train_and_forecast(self, category, periods=6, use_best_params=True):
+        """
+        Train ARIMA model and generate forecasts with improved validation and bounds checking.
+        
+        Args:
+            category: Product category to forecast.
+            periods: Number of periods to forecast.
+            use_best_params: Whether to use grid search (or auto_arima) for best parameters.
+            
+        Returns:
+            Dictionary with forecast results, including visualization data.
+        """
         if category not in self.category_data:
             print(f"Category '{category}' not found")
             return None
-        col = self._get_count_column(category)
-        if not col:
+        
+        count_column = self._get_count_column(category)
+        if not count_column:
             print(f"No suitable numeric column found for {category}")
             return None
-        ts = self.category_data[category][col]
+                
+        ts = self.category_data[category][count_column]
+        
+        # Prepare historical data for visualization
         historical_data = []
         for date, value in zip(ts.index, ts.values):
             historical_data.append({
@@ -385,16 +400,26 @@ class DemandForecaster:
                 'value': float(value),
                 'type': 'historical'
             })
+        
+        # Check if we have enough data for forecasting (at least 4 data points)
         if len(ts) < 4:
             print(f"Insufficient data points for {category}, need at least 4 data points")
             result = self._create_empty_forecast_results(category, ts)
             result['visualization_data'] = historical_data
             return result
+        
+        # Determine ARIMA parameters
         if use_best_params:
-            params = self.best_params.get(category) if category in self.best_params else self.find_best_parameters(category)
+            if category not in self.best_params:
+                params = self.find_best_parameters(category)
+            else:
+                params = self.best_params[category]
         else:
             params = (1, 1, 1)
-        is_seasonal = self.seasonal and (len(params) > 3 and params[6] > 1)
+        
+        # Determine if using seasonal model (SARIMA)
+        is_seasonal = self.seasonal and len(params) > 3 and params[6] > 1
+            
         if is_seasonal:
             p, d, q, P, D, Q, s = params
             if len(ts) < (4 + d + D * s):
@@ -409,14 +434,16 @@ class DemandForecaster:
                 print(f"Insufficient data for differencing with d={params[1]}, reducing d parameter")
                 p, _, q = params
                 params = (p, 1, q)
+        
+        # Train-test split for validation (80-20 split)
         train_size = max(int(len(ts) * 0.8), 3)
         test_size = len(ts) - train_size
-        mae = None
-        rmse = None
-        mape_val = None
+        
+        mae, rmse, mape_val = None, None, None
+        
         if test_size > 0:
-            train = ts[:train_size]
-            test = ts[train_size:]
+            train, test = ts[:train_size], ts[train_size:]
+            
             try:
                 if is_seasonal:
                     from statsmodels.tsa.statespace.sarimax import SARIMAX
@@ -429,8 +456,10 @@ class DemandForecaster:
                     model_fit = model.fit()
                 self.models[category] = model_fit
                 forecast = model_fit.forecast(steps=test_size)
-                test_values = test.values
-                forecast_values = forecast.values
+                
+                test_values = test.values if hasattr(test, 'values') else test
+                forecast_values = forecast.values if hasattr(forecast, 'values') else forecast
+                
                 if len(test_values) == len(forecast_values):
                     mae = mean_absolute_error(test_values, forecast_values)
                     rmse = np.sqrt(mean_squared_error(test_values, forecast_values))
@@ -442,7 +471,9 @@ class DemandForecaster:
                 print(f"Error in model validation for {category}: {e}")
         else:
             print(f"Warning: Insufficient data for validation split for {category}, proceeding with full data training")
+        
         self.performance[category] = {'mae': mae, 'rmse': rmse, 'mape': mape_val}
+        
         try:
             if is_seasonal:
                 from statsmodels.tsa.statespace.sarimax import SARIMAX
@@ -453,20 +484,25 @@ class DemandForecaster:
             else:
                 final_model = ARIMA(ts, order=params)
                 final_model_fit = final_model.fit()
+            
             forecast_values = final_model_fit.forecast(steps=periods)
             forecast_values = np.maximum(forecast_values, 0)
             historical_mean = ts.mean()
+            
+            # Check for significant decline
             significant_decline = False
             if len(ts) >= 6:
                 first_3_avg = ts[:3].mean()
                 last_3_avg = ts[-3:].mean()
                 if first_3_avg > 0 and (last_3_avg / first_3_avg) < 0.5:
                     significant_decline = True
+            
             if not significant_decline:
                 min_forecast_value = max(0.1 * historical_mean, 1)
                 forecast_values = np.maximum(forecast_values, min_forecast_value)
             else:
                 forecast_values = np.maximum(forecast_values, 1)
+            
             try:
                 if isinstance(ts.index[-1], pd.Timestamp):
                     last_date = ts.index[-1]
@@ -480,13 +516,14 @@ class DemandForecaster:
             except Exception as e:
                 print(f"Error creating forecast index for {category}: {e}")
                 forecast_index = range(periods)
+            
             try:
                 forecast_values = pd.Series(forecast_values).fillna(ts.mean()).values
                 forecast_df = pd.DataFrame({'forecast': forecast_values}, index=forecast_index)
                 try:
                     if is_seasonal:
                         if rmse is not None:
-                            z_value = 1.645  # 95% confidence
+                            z_value = 1.645
                             forecast_df['lower_ci'] = np.maximum(forecast_values - z_value * rmse, 0)
                             forecast_df['upper_ci'] = forecast_values + z_value * rmse
                         else:
@@ -531,11 +568,13 @@ class DemandForecaster:
                 result = self._create_empty_forecast_results(category, ts)
                 result['visualization_data'] = historical_data
                 return result
+                
         except Exception as e:
             print(f"Error in final forecasting for {category}: {e}")
             result = self._create_empty_forecast_results(category, ts)
             result['visualization_data'] = historical_data
             return result
+
 
     def _create_empty_forecast_results(self, category, ts):
         # Set a default average value based on ts

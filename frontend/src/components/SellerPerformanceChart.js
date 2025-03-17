@@ -87,12 +87,13 @@ const SellerPerformanceChart = ({ sellerData }) => {
     return null;
   };
   
-  // If no data, show a message instead of an empty chart
+  // If no data, show a message in a Box with fixed height/width to match visualization requirements.
   if (processedData.length === 0) {
     return (
       <Box sx={{ 
         width: '100%', 
-        height: '100%', 
+        height: 400,  // Fixed height ensures layout consistency
+        minHeight: 400,
         display: 'flex', 
         alignItems: 'center', 
         justifyContent: 'center' 
@@ -106,7 +107,7 @@ const SellerPerformanceChart = ({ sellerData }) => {
   
   return (
     <Box sx={{ width: '100%', height: '100%' }}>
-      <ResponsiveContainer width="100%" height="100%">
+      <ResponsiveContainer width="100%" height={400}>
         <ScatterChart margin={{ top: 20, right: 20, bottom: 10, left: 10 }}>
           <CartesianGrid strokeDasharray="3 3" />
           <XAxis
