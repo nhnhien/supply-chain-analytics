@@ -1,3 +1,13 @@
+#!/usr/bin/env python3
+"""
+Enhanced ARIMA Forecasting Module
+
+This module implements demand forecasting using ARIMA (or SARIMA)
+models with improved parameter selection, seasonality handling,
+and consistent error handling. In the forecasting routine, all errors
+are caught and a fallback result is returned.
+"""
+
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -12,11 +22,10 @@ import seaborn as sns
 import warnings
 warnings.filterwarnings("ignore")
 
+
 class DemandForecaster:
     """
-    Enhanced class for demand forecasting using ARIMA models
-    with improved parameter selection, seasonality handling, and
-    consistent error handling.
+    Enhanced class for demand forecasting using ARIMA models.
     """
     def __init__(self, data_path="demand_by_category.csv"):
         self.data = pd.read_csv(data_path)
@@ -27,7 +36,7 @@ class DemandForecaster:
         self.best_params = {}
         self.growth_rates = {}
         self.count_column = None
-        self.use_auto_arima = False  # Set to True for auto parameter selection
+        self.use_auto_arima = False  # Set to True for auto ARIMA parameter selection
         self.seasonal = False        # Set to True to include seasonality
         self.seasonal_period = 12    # Default seasonal period (monthly data)
 
@@ -56,7 +65,7 @@ class DemandForecaster:
                 self.data['year'] = self.data[date_col].dt.year
                 self.data['month'] = self.data[date_col].dt.month
                 self.data['date'] = pd.to_datetime(
-                    self.data['year'].astype(str) + '-' + 
+                    self.data['year'].astype(str) + '-' +
                     self.data['month'].astype(str).str.zfill(2) + '-01'
                 )
             else:
@@ -67,7 +76,7 @@ class DemandForecaster:
                     self.data['year'] = self.data[year_col]
                     self.data['month'] = self.data[month_col]
                     self.data['date'] = pd.to_datetime(
-                        self.data['year'].astype(str) + '-' + 
+                        self.data['year'].astype(str) + '-' +
                         self.data['month'].astype(str).str.zfill(2) + '-01'
                     )
                 else:
@@ -77,7 +86,7 @@ class DemandForecaster:
                     self.data['month'] = self.data['date'].dt.month
         else:
             self.data['date'] = pd.to_datetime(
-                self.data['year'].astype(str) + '-' + 
+                self.data['year'].astype(str) + '-' +
                 self.data['month'].astype(str).str.zfill(2) + '-01'
             )
         self.category_data = {}
@@ -105,21 +114,11 @@ class DemandForecaster:
                     print(f"No standard count column found. Using '{self.count_column}' as count column")
                     break
         print(f"Processed {len(self.category_data)} categories")
-        
+
     def test_stationarity(self, category):
         """
         Test if a time series is stationary using the Augmented Dickey-Fuller test.
-        
-        Args:
-            category: Product category to test.
-            
-        Returns:
-            Dictionary with keys:
-              - adf_statistic
-              - p_value
-              - critical_values
-              - is_stationary
-              - error (empty string if no error)
+        Returns a dictionary including error information instead of propagating exceptions.
         """
         result = {
             "adf_statistic": None,
@@ -178,19 +177,19 @@ class DemandForecaster:
                     axes[1].set_ylabel('Trend')
                     axes[1].grid(True)
                     axes[2].plot(decomposition.seasonal.index, decomposition.seasonal.values)
-                    axes[2].set_title('Seasonal Component')
+                    axes[2].setTitle('Seasonal Component')
                     axes[2].set_ylabel('Seasonality')
                     axes[2].grid(True)
                 else:
-                    axes[1].text(0.5, 0.5, 'Insufficient data for trend analysis', 
+                    axes[1].text(0.5, 0.5, 'Insufficient data for trend analysis',
                                  horizontalalignment='center', verticalalignment='center')
-                    axes[2].text(0.5, 0.5, 'Insufficient data for seasonality analysis', 
+                    axes[2].text(0.5, 0.5, 'Insufficient data for seasonality analysis',
                                  horizontalalignment='center', verticalalignment='center')
             except Exception as e:
                 print(f"Error in seasonal decomposition: {e}")
-                axes[1].text(0.5, 0.5, f'Error in trend analysis: {e}', 
+                axes[1].text(0.5, 0.5, f'Error in trend analysis: {e}',
                              horizontalalignment='center', verticalalignment='center')
-                axes[2].text(0.5, 0.5, f'Error in seasonality analysis: {e}', 
+                axes[2].text(0.5, 0.5, f'Error in seasonality analysis: {e}',
                              horizontalalignment='center', verticalalignment='center')
             plt.tight_layout()
             plt.subplots_adjust(top=0.9)
@@ -231,12 +230,16 @@ class DemandForecaster:
                     plot_pacf(ts_diff, ax=ax2, lags=max_lags)
                     ax2.set_title('Partial Autocorrelation Function')
                 else:
-                    ax1.text(0.5, 0.5, 'Insufficient data for ACF', horizontalalignment='center', verticalalignment='center')
-                    ax2.text(0.5, 0.5, 'Insufficient data for PACF', horizontalalignment='center', verticalalignment='center')
+                    ax1.text(0.5, 0.5, 'Insufficient data for ACF',
+                             horizontalalignment='center', verticalalignment='center')
+                    ax2.text(0.5, 0.5, 'Insufficient data for PACF',
+                             horizontalalignment='center', verticalalignment='center')
             except Exception as e:
                 print(f"Error plotting ACF/PACF for {category}: {e}")
-                ax1.text(0.5, 0.5, f'Error plotting ACF: {e}', horizontalalignment='center', verticalalignment='center')
-                ax2.text(0.5, 0.5, f'Error plotting PACF: {e}', horizontalalignment='center', verticalalignment='center')
+                ax1.text(0.5, 0.5, f'Error plotting ACF: {e}',
+                         horizontalalignment='center', verticalalignment='center')
+                ax2.text(0.5, 0.5, f'Error plotting PACF: {e}',
+                         horizontalalignment='center', verticalalignment='center')
             plt.tight_layout()
             plt.subplots_adjust(top=0.9)
             plt.savefig(f'{category}_acf_pacf.png')
@@ -472,7 +475,7 @@ class DemandForecaster:
                     try:
                         last_idx = int(ts.index[-1])
                         forecast_index = range(last_idx + 1, last_idx + periods + 1)
-                    except:
+                    except Exception:
                         forecast_index = range(periods)
             except Exception as e:
                 print(f"Error creating forecast index for {category}: {e}")
@@ -483,7 +486,7 @@ class DemandForecaster:
                 try:
                     if is_seasonal:
                         if rmse is not None:
-                            z_value = 1.645
+                            z_value = 1.645  # 95% confidence
                             forecast_df['lower_ci'] = np.maximum(forecast_values - z_value * rmse, 0)
                             forecast_df['upper_ci'] = forecast_values + z_value * rmse
                         else:
@@ -546,7 +549,7 @@ class DemandForecaster:
                     try:
                         last_idx = int(ts.index[-1])
                         forecast_index = range(last_idx + 1, last_idx + periods + 1)
-                    except:
+                    except Exception:
                         forecast_index = range(periods)
                 else:
                     forecast_index = range(periods)
@@ -614,7 +617,8 @@ class DemandForecaster:
                 'upperBound': float(upper),
                 'type': 'forecast'
             })
-        self.forecastNote[category] = "Fallback forecast used due to insufficient data or errors during modeling."
+        # Log a fallback forecast note (you might want to store this differently)
+        print(f"Fallback forecast used for {category} due to errors or insufficient data.")
         return {
             'model': None,
             'forecast': forecast_df,
@@ -631,9 +635,9 @@ class DemandForecaster:
             self.preprocess_data()
         all_categories = {}
         for category, df in self.category_data.items():
-            const_col = self._get_count_column(category)
-            if const_col:
-                total_demand = df[const_col].sum()
+            col = self._get_count_column(category)
+            if col:
+                total_demand = df[col].sum()
                 all_categories[category] = 0 if pd.isna(total_demand) else total_demand
         top_categories = sorted(all_categories.items(), key=lambda x: x[1], reverse=True)[:top_n]
         import gc
@@ -719,7 +723,7 @@ class DemandForecaster:
                     else:
                         min_forecast = max(future_demand * 0.7, 1)
                         max_forecast = future_demand * 1.3
-                    growth_rate = self.growth_rates.get(category, ( (future_demand - avg_demand) / avg_demand * 100 if avg_demand > 0 else 100 ))
+                    growth_rate = self.growth_rates.get(category, ((future_demand - avg_demand) / avg_demand * 100 if avg_demand > 0 else 100))
                     growth_rate = max(min(growth_rate, 100), -80)
                     self.growth_rates[category] = growth_rate
             except Exception as e:
@@ -762,6 +766,7 @@ class DemandForecaster:
         report_df.to_csv(output_file, index=False)
         print(f"Forecast report saved to {output_file}")
         return report_df
+
 
 if __name__ == "__main__":
     forecaster = DemandForecaster()

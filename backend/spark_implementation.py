@@ -63,12 +63,12 @@ class SparkSupplyChainAnalytics:
                                                         "order_purchase_timestamp TIMESTAMP, order_approved_at TIMESTAMP, " +
                                                         "order_delivered_timestamp TIMESTAMP, order_estimated_delivery_date TIMESTAMP")
         # Load order items data
-        let_order_items_path = os.path.join(self.data_path, "df_OrderItems.csv")
-        if os.path.exists(let_order_items_path):
-            self.order_items_df = self.spark.read.csv(let_order_items_path, header=True, inferSchema=True)
+        order_items_path = os.path.join(self.data_path, "df_OrderItems.csv")
+        if os.path.exists(order_items_path):
+            self.order_items_df = self.spark.read.csv(order_items_path, header=True, inferSchema=True)
             print(f"Loaded order items data: {self.order_items_df.count()} rows")
         else:
-            print(f"Warning: Order items data file not found at {let_order_items_path}")
+            print(f"Warning: Order items data file not found at {order_items_path}")
             self.order_items_df = self.spark.createDataFrame([], "order_id STRING, order_item_id INT, product_id STRING, " +
                                                            "seller_id STRING, price DOUBLE, shipping_charges DOUBLE")
         # Load products data
@@ -120,7 +120,7 @@ class SparkSupplyChainAnalytics:
                          when(col("order_delivered_timestamp") <= col("order_estimated_delivery_date"), 1).otherwise(0)
                     ).otherwise(None)
                 )
-        # Preprocess products data with check for column existence
+        # Preprocess products data
         if self.products_df:
             for num_col in ["product_weight_g", "product_length_cm", "product_height_cm", "product_width_cm"]:
                 if num_col in self.products_df.columns:
@@ -137,16 +137,16 @@ class SparkSupplyChainAnalytics:
                         when(col(num_col).isNull(), lit(global_median)).otherwise(col(num_col))
                     )
                     self.products_df = self.products_df.drop(f"{num_col}_median")
-        # Preprocess order items data with fallback defaults
+        # Preprocess order items data
         if self.order_items_df:
             for value_col in ["price", "shipping_charges"]:
                 if value_col in self.order_items_df.columns:
                     product_medians = self.order_items_df.groupBy("product_id") \
-                                          .agg(percentile_approx(col(value_col), 0.5).alias(`${value_col}_median`))
+                                          .agg(percentile_approx(col(value_col), 0.5).alias(f"{value_col}_median"))
                     self.order_items_df = self.order_items_df.join(product_medians, on="product_id", how="left")
                     self.order_items_df = self.order_items_df.withColumn(
                         value_col,
-                        when(col(value_col).isNull(), col(`${value_col}_median`)).otherwise(col(value_col))
+                        when(col(value_col).isNull(), col(f"{value_col}_median")).otherwise(col(value_col))
                     )
                     global_median = self.order_items_df.select(percentile_approx(col(value_col), 0.5)).collect()[0][0]
                     if global_median is None:
@@ -166,9 +166,9 @@ class SparkSupplyChainAnalytics:
             print("Warning: Not all required datasets are loaded")
             return self
         # Check required join columns; log warnings if missing.
-        for col in ["order_id"]:
-            if col not in self.orders_df.columns:
-                print(f"Warning: '{col}' column missing from orders data")
+        for col_name in ["order_id"]:
+            if col_name not in self.orders_df.columns:
+                print(f"Warning: '{col_name}' column missing from orders data")
         unified_df = self.orders_df.join(self.order_items_df, on="order_id", how="inner")
         unified_df = unified_df.join(self.products_df, on="product_id", how="left")
         unified_df = unified_df.join(self.customers_df, on="customer_id", how="left")
@@ -189,10 +189,9 @@ class SparkSupplyChainAnalytics:
         if not self.unified_df:
             print("Warning: Unified dataset not available. Run build_unified_dataset first.")
             return self, None, None
-        # Check for required columns; if missing, log warning.
-        for col in ["product_category_name", "order_year", "order_month"]:
-            if col not in self.unified_df.columns:
-                print(f"Warning: Column '{col}' is missing from unified dataset.")
+        for col_name in ["product_category_name", "order_year", "order_month"]:
+            if col_name not in self.unified_df.columns:
+                print(f"Warning: Column '{col_name}' is missing from unified dataset.")
         monthly_demand = self.unified_df.groupBy(
             "product_category_name", "order_year", "order_month"
         ).agg(
@@ -267,10 +266,7 @@ class SparkSupplyChainAnalytics:
             cluster_stats_pd['avg_otd'] * 30
         )
         cluster_stats_pd = cluster_stats_pd.sort_values('score', ascending=False)
-        performance_mapping = {
-            cluster_stats_pd.iloc[i]['prediction']: i 
-            for i in range(min(len(cluster_stats_pd), 3))
-        }
+        performance_mapping = {cluster_stats_pd.iloc[i]['prediction']: i for i in range(min(len(cluster_stats_pd), 3))}
         for i in range(cluster_count):
             if i not in performance_mapping:
                 performance_mapping[i] = len(performance_mapping)
@@ -330,7 +326,7 @@ class SparkSupplyChainAnalytics:
             print("Warning: No category column found in forecast data")
             return self, pd.DataFrame()
         recommendations = []
-        for _, forecast_row in forecast_data.iterrows():
+        for index, forecast_row in forecast_data.iterrows():
             category = forecast_row[category_col]
             if not category or pd.isna(category):
                 continue
@@ -339,13 +335,13 @@ class SparkSupplyChainAnalytics:
                 continue
             avg_demand = forecast_row.get('avg_historical_demand')
             if avg_demand is None or pd.isna(avg_demand):
-                try {
+                try:
                     monthly_demand = category_data.groupBy("order_year", "order_month") \
                                    .agg(count("order_id").alias("count"))
                     avg_demand = monthly_demand.agg(avg("count")).collect()[0][0]
                     if avg_demand is None:
                         avg_demand = 100
-                except:
+                except Exception:
                     avg_demand = 100
             forecast_demand = None
             for field_name in ['forecast_demand', 'next_month_forecast']:
@@ -370,11 +366,11 @@ class SparkSupplyChainAnalytics:
             safety_stock = max(safety_stock, avg_demand * 0.3)
             reorder_point = (avg_demand * lead_time_months) + safety_stock
             avg_item_cost = 0
-            try {
+            try:
                 avg_item_cost = category_data.agg(avg("price")).collect()[0][0]
                 if avg_item_cost is None or avg_item_cost <= 0:
                     avg_item_cost = 50
-            } catch:
+            except Exception:
                 avg_item_cost = 50
             annual_demand = avg_demand * 12
             order_cost = 50
@@ -386,7 +382,7 @@ class SparkSupplyChainAnalytics:
             const_growth = forecast_row.get('growth_rate', 0)
             if pd.isna(const_growth):
                 const_growth = 0
-            recommendations.push({
+            recommendations.append({
                 'product_category': category,
                 'category': category,
                 'avg_monthly_demand': avg_demand,
@@ -398,10 +394,10 @@ class SparkSupplyChainAnalytics:
                 'lead_time_days': lead_time_days,
                 'days_between_orders': days_between_orders,
                 'avg_item_cost': avg_item_cost
-            });
+            })
         recommendations_df = pd.DataFrame(recommendations)
-        if len(recommendations) === 0:
-            print("Warning: No recommendations could be generated");
+        if len(recommendations) == 0:
+            print("Warning: No recommendations could be generated")
             recommendations_df = pd.DataFrame({
                 'product_category': ['Default'],
                 'category': ['Default'],
@@ -414,274 +410,236 @@ class SparkSupplyChainAnalytics:
                 'lead_time_days': [7],
                 'days_between_orders': [30],
                 'avg_item_cost': [50]
-            });
-        const recommendations_path = os.path.join(self.output_path, "reorder_recommendations.csv")
+            })
+        recommendations_path = os.path.join(self.output_path, "reorder_recommendations.csv")
         recommendations_df.to_csv(recommendations_path, index=False)
-        print(`Reorder recommendations saved to ${recommendations_path}`)
+        print(f"Reorder recommendations saved to {recommendations_path}")
         try:
             self._visualize_recommendations(recommendations_df)
         except Exception as e:
-            print(`Error creating recommendation visualizations: ${e}`)
+            print(f"Error creating recommendation visualizations: {e}")
         return self, recommendations_df
 
     def calculate_performance_metrics(self):
         print("Calculating supply chain performance metrics...")
         if not self.unified_df:
             print("Warning: Unified dataset not available. Run build_unified_dataset first.")
-            const default_metrics = {
+            default_metrics = {
                 'avg_processing_time': 1.0,
                 'avg_delivery_days': 7.0,
                 'on_time_delivery_rate': 85.0,
                 'perfect_order_rate': 80.0,
                 'inventory_turnover': 8.0,
                 'is_estimated': True
-            };
-            return self, default_metrics;
-        try {
-            let avg_processing_time = null;
-            if ('processing_time' in self.unified_df.columns) {
-                avg_processing_time = self.unified_df.agg(avg("processing_time")).collect()[0][0];
             }
-            if (avg_processing_time === null) {
-                avg_processing_time = 1.0;
-                print("Using default processing time: 1.0 days");
-            }
-            let avg_delivery_days = null;
-            if ('delivery_days' in self.unified_df.columns) {
-                avg_delivery_days = self.unified_df.agg(avg("delivery_days")).collect()[0][0];
-            } else {
-                avg_delivery_days = 7.0;
-                print("Column 'delivery_days' not found, using default: 7.0 days");
-            }
-            let on_time_delivery_rate = null;
-            if ('on_time_delivery' in self.unified_df.columns) {
-                const on_time_delivery = self.unified_df.agg(avg("on_time_delivery")).collect()[0][0];
-                if (on_time_delivery !== null) {
-                    on_time_delivery_rate = on_time_delivery * 100;
-                }
-            }
-            if (on_time_delivery_rate === null) {
-                on_time_delivery_rate = 85.0;
-                print("Using industry average for on-time delivery rate: 85.0%");
-            }
-            const perfect_order_rate = on_time_delivery_rate * 0.95;
-            const inventory_turnover = 8.0;
-            let avg_order_value = null;
-            if ('price' in self.unified_df.columns) {
-                const total_sales = self.unified_df.agg(sum("price")).collect()[0][0];
-                const total_orders = self.unified_df.select("order_id").distinct().count();
-                if (total_sales !== null && total_orders > 0) {
-                    avg_order_value = total_sales / total_orders;
-                }
-            }
-            if (avg_order_value === null) {
-                avg_order_value = 100.0;
-                print("Using default average order value: $100.00");
-            }
-            const metrics = {
+            return self, default_metrics
+        try:
+            avg_processing_time = None
+            if 'processing_time' in self.unified_df.columns:
+                avg_processing_time = self.unified_df.agg(avg("processing_time")).collect()[0][0]
+            if avg_processing_time is None:
+                avg_processing_time = 1.0
+                print("Using default processing time: 1.0 days")
+            avg_delivery_days = None
+            if 'delivery_days' in self.unified_df.columns:
+                avg_delivery_days = self.unified_df.agg(avg("delivery_days")).collect()[0][0]
+            else:
+                avg_delivery_days = 7.0
+                print("Column 'delivery_days' not found, using default: 7.0 days")
+            on_time_delivery_rate = None
+            if 'on_time_delivery' in self.unified_df.columns:
+                on_time_delivery = self.unified_df.agg(avg("on_time_delivery")).collect()[0][0]
+                if on_time_delivery is not None:
+                    on_time_delivery_rate = on_time_delivery * 100
+            if on_time_delivery_rate is None:
+                on_time_delivery_rate = 85.0
+                print("Using industry average for on-time delivery rate: 85.0%")
+            perfect_order_rate = on_time_delivery_rate * 0.95
+            inventory_turnover = 8.0
+            avg_order_value = None
+            if 'price' in self.unified_df.columns:
+                total_sales = self.unified_df.agg(sum("price")).collect()[0][0]
+                total_orders = self.unified_df.select("order_id").distinct().count()
+                if total_sales is not None and total_orders > 0:
+                    avg_order_value = total_sales / total_orders
+            if avg_order_value is None:
+                avg_order_value = 100.0
+                print("Using default average order value: $100.00")
+            metrics = {
                 'avg_processing_time': avg_processing_time,
                 'avg_delivery_days': avg_delivery_days,
                 'on_time_delivery_rate': on_time_delivery_rate,
                 'perfect_order_rate': perfect_order_rate,
                 'avg_order_value': avg_order_value,
                 'inventory_turnover': inventory_turnover,
-                'is_estimated': !('delivery_days' in self.unified_df.columns)
-            };
-            const metrics_df = pd.DataFrame([metrics]);
-            const metrics_path = os.path.join(self.output_path, "performance_metrics.csv");
-            metrics_df.to_csv(metrics_path, index=False);
-            print(`Performance metrics saved to ${metrics_path}`);
-            return self, metrics;
-        } catch (e) {
-            print(`Error calculating performance metrics: ${e}`);
-            const default_metrics = {
+                'is_estimated': 'delivery_days' not in self.unified_df.columns
+            }
+            metrics_df = pd.DataFrame([metrics])
+            metrics_path = os.path.join(self.output_path, "performance_metrics.csv")
+            metrics_df.to_csv(metrics_path, index=False)
+            print(f"Performance metrics saved to {metrics_path}")
+            return self, metrics
+        except Exception as e:
+            print(f"Error calculating performance metrics: {e}")
+            default_metrics = {
                 'avg_processing_time': 1.0,
                 'avg_delivery_days': 7.0,
                 'on_time_delivery_rate': 85.0,
                 'perfect_order_rate': 80.0,
                 'inventory_turnover': 8.0,
                 'is_estimated': True
-            };
-            return self, default_metrics;
-        }
-    }
+            }
+            return self, default_metrics
 
-    def generate_summary_report(self, monthly_demand=null, seller_clusters=null, recommendations=null):
-        print("Generating summary report...");
-        const timestamp = pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S");
-        const report = [
+    def generate_summary_report(self, monthly_demand=None, seller_clusters=None, recommendations=None):
+        print("Generating summary report...")
+        timestamp = pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")
+        report = [
             "# Supply Chain Analytics for Demand Forecasting",
-            `## Report Generated on ${timestamp}`,
+            f"## Report Generated on {timestamp}",
             "",
             "### Dataset Summary"
-        ];
-        if (self.unified_df) {
-            const total_orders = self.unified_df.select("order_id").distinct().count();
-            const total_products = self.unified_df.select("product_id").distinct().count();
-            const total_customers = self.unified_df.select("customer_id").distinct().count();
-            report.push(`- Total Orders: ${total_orders}`);
-            report.push(`- Total Products: ${total_products}`);
-            report.push(`- Total Customers: ${total_customers}`);
-        }
-        report.push("\n### Top Product Categories by Demand");
-        if (monthly_demand !== null) {
-            const category_demand = monthly_demand.groupby('product_category_name')['order_count'].sum().reset_index();
-            const top_categories = category_demand.sort_values('order_count', ascending=false).head(10);
-            top_categories.iterrows().forEach((_, row, i) => {
-                report.push(`${i+1}. ${row['product_category_name']}: ${parseInt(row['order_count'])} orders`);
-            });
-        }
-        report.push("\n### Seller Performance Analysis");
-        if (seller_clusters !== null) {
-            const cluster_counts = seller_clusters['performance_cluster'].value_counts().sort_index();
-            const performance_names = {0: "High", 1: "Medium", 2: "Low"};
-            Object.keys(cluster_counts).forEach(cluster => {
-                const count = cluster_counts[cluster];
-                const performance = performance_names[cluster] || `Cluster ${cluster}`;
-                const percentage = (count / seller_clusters.length) * 100;
-                report.push(`- ${performance} Performers: ${count} sellers (${percentage.toFixed(1)}%)`);
-            });
-        }
-        report.push("\n### Inventory Recommendations");
-        if (recommendations !== null) {
-            const top_recos = recommendations.sort_values('reorder_point', ascending=false).head(5);
-            top_recos.iterrows().forEach(row => {
-                report.push(`- ${row['product_category']}: Reorder at ${parseInt(row['reorder_point'])} units, Safety stock: ${parseInt(row['safety_stock'])} units, Growth rate: ${parseFloat(row['growth_rate']).toFixed(1)}%`);
-            });
-        }
-        report.push("\n### Supply Chain Performance Metrics");
-        try {
-            const metrics_path = os.path.join(self.output_path, "performance_metrics.csv");
-            if (os.path.exists(metrics_path)) {
-                const metrics_df = pd.read_csv(metrics_path);
-                if (!metrics_df.empty) {
-                    const row = metrics_df.iloc[0];
-                    if ('avg_processing_time' in row) {
-                        report.push(`- Average Processing Time: ${row['avg_processing_time'].toFixed(2)} days`);
-                    }
-                    if ('avg_delivery_days' in row) {
-                        report.push(`- Average Delivery Time: ${row['avg_delivery_days'].toFixed(2)} days`);
-                    }
-                    if ('on_time_delivery_rate' in row) {
-                        report.push(`- On-Time Delivery Rate: ${row['on_time_delivery_rate'].toFixed(2)}%`);
-                    }
-                    if ('perfect_order_rate' in row) {
-                        report.push(`- Perfect Order Rate: ${row['perfect_order_rate'].toFixed(2)}%`);
-                    }
-                }
-            }
-        } catch (e) {
-            print(`Error loading performance metrics: ${e}`);
-        }
-        report.push("");
-        report.push("### Next Steps");
-        report.push("1. Review forecasts for high-growth categories to ensure adequate inventory");
-        report.push("2. Engage with low-performing sellers to improve their metrics");
-        report.push("3. Monitor delivery times for problematic geographical regions");
-        report.push("4. Consider implementing automated reordering system based on recommendations");
-        const report_text = report.join("\n");
-        const report_path = os.path.join(self.output_path, "summary_report.md");
+        ]
+        if self.unified_df is not None:
+            total_orders = self.unified_df.select("order_id").distinct().count()
+            total_products = self.unified_df.select("product_id").distinct().count()
+            total_customers = self.unified_df.select("customer_id").distinct().count()
+            report.append(f"- Total Orders: {total_orders}")
+            report.append(f"- Total Products: {total_products}")
+            report.append(f"- Total Customers: {total_customers}")
+        report.append("\n### Top Product Categories by Demand")
+        if monthly_demand is not None:
+            category_demand = monthly_demand.groupby('product_category_name')['order_count'].sum().reset_index()
+            top_categories = category_demand.sort_values('order_count', ascending=False).head(10)
+            for i, row in top_categories.iterrows():
+                report.append(f"{i+1}. {row['product_category_name']}: {int(row['order_count'])} orders")
+        report.append("\n### Seller Performance Analysis")
+        if seller_clusters is not None:
+            cluster_counts = seller_clusters['performance_cluster'].value_counts().sort_index()
+            performance_names = {0: "High", 1: "Medium", 2: "Low"}
+            for cluster, count in cluster_counts.items():
+                performance = performance_names.get(cluster, f"Cluster {cluster}")
+                percentage = (count / len(seller_clusters)) * 100
+                report.append(f"- {performance} Performers: {count} sellers ({percentage:.1f}%)")
+        report.append("\n### Inventory Recommendations")
+        if recommendations is not None:
+            top_recos = recommendations.sort_values('reorder_point', ascending=False).head(5)
+            for index, row in top_recos.iterrows():
+                report.append(f"- {row['product_category']}: Reorder at {int(row['reorder_point'])} units, Safety stock: {int(row['safety_stock'])} units, Growth rate: {float(row['growth_rate']):.1f}%")
+        report.append("\n### Supply Chain Performance Metrics")
+        try:
+            metrics_path = os.path.join(self.output_path, "performance_metrics.csv")
+            if os.path.exists(metrics_path):
+                metrics_df = pd.read_csv(metrics_path)
+                if not metrics_df.empty:
+                    row = metrics_df.iloc[0]
+                    if 'avg_processing_time' in row:
+                        report.append(f"- Average Processing Time: {float(row['avg_processing_time']):.2f} days")
+                    if 'avg_delivery_days' in row:
+                        report.append(f"- Average Delivery Time: {float(row['avg_delivery_days']):.2f} days")
+                    if 'on_time_delivery_rate' in row:
+                        report.append(f"- On-Time Delivery Rate: {float(row['on_time_delivery_rate']):.2f}%")
+                    if 'perfect_order_rate' in row:
+                        report.append(f"- Perfect Order Rate: {float(row['perfect_order_rate']):.2f}%")
+        except Exception as e:
+            print(f"Error loading performance metrics: {e}")
+        report.append("")
+        report.append("### Next Steps")
+        report.append("1. Review forecasts for high-growth categories to ensure adequate inventory")
+        report.append("2. Engage with low-performing sellers to improve their metrics")
+        report.append("3. Monitor delivery times for problematic geographical regions")
+        report.append("4. Consider implementing automated reordering system based on recommendations")
+        report_text = "\n".join(report)
+        report_path = os.path.join(self.output_path, "summary_report.md")
         with open(report_path, "w") as f:
-            f.write(report_text);
-        print(`Summary report saved to ${report_path}`);
-        return self;
-    }
-
-    // Visualization functions below remain largely unchanged,
-    // but include try/catch blocks for consistent error handling.
+            f.write(report_text)
+        print(f"Summary report saved to {report_path}")
+        return self
 
     def _visualize_top_categories(self, top_categories_pd, monthly_demand_pd):
         try:
             plt.figure(figsize=(12, 8))
-            const categories_to_plot = top_categories_pd.head(10);
+            categories_to_plot = top_categories_pd.head(10)
             plt.bar(
                 categories_to_plot['product_category_name'],
                 categories_to_plot['order_count'],
                 color=sns.color_palette("viridis", len(categories_to_plot))
-            );
-            plt.title('Top 10 Product Categories by Order Count', fontsize=16);
-            plt.xlabel('Product Category', fontsize=14);
-            plt.ylabel('Order Count', fontsize=14);
-            plt.xticks(rotation=45, ha='right');
-            plt.tight_layout();
-            plt.savefig(os.path.join(self.output_path, "top_categories.png"), dpi=300);
-            plt.close();
-            plt.figure(figsize=(14, 8));
-            const top_5_categories = top_categories_pd.head(5)['product_category_name'].tolist();
-            if (!('date' in monthly_demand_pd.columns) && ('order_year' in monthly_demand_pd.columns && 'order_month' in monthly_demand_pd.columns)) {
+            )
+            plt.title('Top 10 Product Categories by Order Count', fontsize=16)
+            plt.xlabel('Product Category', fontsize=14)
+            plt.ylabel('Order Count', fontsize=14)
+            plt.xticks(rotation=45, ha='right')
+            plt.tight_layout()
+            plt.savefig(os.path.join(self.output_path, "top_categories.png"), dpi=300)
+            plt.close()
+            plt.figure(figsize=(14, 8))
+            top_5_categories = top_categories_pd.head(5)['product_category_name'].tolist()
+            if 'date' not in monthly_demand_pd.columns and 'order_year' in monthly_demand_pd.columns and 'order_month' in monthly_demand_pd.columns:
                 monthly_demand_pd['date'] = pd.to_datetime(
                     monthly_demand_pd['order_year'].astype(str) + '-' + monthly_demand_pd['order_month'].astype(str).str.zfill(2) + '-01'
-                );
-            }
-            for (const category of top_5_categories) {
-                try {
-                    const category_data = monthly_demand_pd[monthly_demand_pd['product_category_name'] === category].copy();
-                    if (category_data.length === 0) continue;
-                    if ('date' in category_data.columns) {
-                        category_data.sort_values('date', inplace=True);
-                    }
+                )
+            for category in top_5_categories:
+                try:
+                    category_data = monthly_demand_pd[monthly_demand_pd['product_category_name'] == category].copy()
+                    if len(category_data) == 0:
+                        continue
+                    if 'date' in category_data.columns:
+                        category_data.sort_values('date', inplace=True)
                     plt.plot(
-                        'date' in category_data.columns ? category_data['date'] : Array.from({length: category_data.length}, (_, i) => i),
+                        category_data['date'] if 'date' in category_data.columns else list(range(len(category_data))),
                         category_data['order_count'],
                         marker='o',
                         linewidth=2,
                         label=category
-                    );
-                } catch (e) {
-                    print(`Error plotting category ${category}: ${e}`);
-                    continue;
-                }
-            }
-            plt.title('Monthly Demand Trends for Top 5 Categories', fontsize=16);
-            plt.xlabel('Date', fontsize=14);
-            plt.ylabel('Order Count', fontsize=14);
-            plt.legend(fontsize=12);
-            plt.grid(True, alpha=0.3);
-            if ('date' in monthly_demand_pd.columns) {
-                plt.gca().xaxis.set_major_formatter(plt.matplotlib.dates.DateFormatter('%b %Y'));
-                plt.gcf().autofmt_xdate();
-            }
-            plt.tight_layout();
-            plt.savefig(os.path.join(self.output_path, "demand_trends.png"), dpi=300);
-            plt.close();
-        } except (e) {
-            print(`Error creating category visualizations: ${e}`);
-        }
+                    )
+                except Exception as e:
+                    print(f"Error plotting category {category}: {e}")
+                    continue
+            plt.title('Monthly Demand Trends for Top 5 Categories', fontsize=16)
+            plt.xlabel('Date', fontsize=14)
+            plt.ylabel('Order Count', fontsize=14)
+            plt.legend(fontsize=12)
+            plt.grid(True, alpha=0.3)
+            if 'date' in monthly_demand_pd.columns:
+                plt.gca().xaxis.set_major_formatter(plt.matplotlib.dates.DateFormatter('%b %Y'))
+                plt.gcf().autofmt_xdate()
+            plt.tight_layout()
+            plt.savefig(os.path.join(self.output_path, "demand_trends.png"), dpi=300)
+            plt.close()
+        except Exception as e:
+            print(f"Error creating category visualizations: {e}")
 
     def _visualize_seller_clusters(self, seller_clusters_pd, cluster_centers_pd=None):
-        try {
-            if (seller_clusters_pd.length === 0) {
-                print("No seller cluster data available for visualization");
-                return;
-            }
-            if (!('prediction' in seller_clusters_pd.columns)) {
-                print("Missing required 'prediction' column in seller clusters data");
-                return;
-            }
-            plt.figure(figsize=(12, 10));
-            const colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd'];
-            const cluster_names = {0: 'High Performers', 1: 'Average Performers', 2: 'Low Performers'};
-            const x_col = 'total_sales' in seller_clusters_pd.columns ? 'total_sales' : null;
-            const y_col = 'avg_processing_time' in seller_clusters_pd.columns ? 'avg_processing_time' : null;
-            if (x_col === null || y_col === null) {
-                print("Missing required columns for scatter plot");
-                self._visualize_seller_distribution(seller_clusters_pd);
-                return;
-            }
-            for (const cluster of Array.from(new Set(seller_clusters_pd['prediction']))) {
-                const cluster_data = seller_clusters_pd.filter(row => row['prediction'] === cluster);
-                const label = cluster_names[cluster] || `Cluster ${cluster}`;
+        try:
+            if len(seller_clusters_pd) == 0:
+                print("No seller cluster data available for visualization")
+                return
+            if 'prediction' not in seller_clusters_pd.columns:
+                print("Missing required 'prediction' column in seller clusters data")
+                return
+            plt.figure(figsize=(12, 10))
+            colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd']
+            cluster_names = {0: 'High Performers', 1: 'Average Performers', 2: 'Low Performers'}
+            x_col = 'total_sales' if 'total_sales' in seller_clusters_pd.columns else None
+            y_col = 'avg_processing_time' if 'avg_processing_time' in seller_clusters_pd.columns else None
+            if x_col is None or y_col is None:
+                print("Missing required columns for scatter plot")
+                self._visualize_seller_distribution(seller_clusters_pd)
+                return
+            unique_clusters = set(seller_clusters_pd['prediction'])
+            for cluster in unique_clusters:
+                cluster_data = seller_clusters_pd[seller_clusters_pd['prediction'] == cluster]
+                label = cluster_names.get(cluster, f'Cluster {cluster}')
                 plt.scatter(
-                    cluster_data.map(row => row[x_col]),
-                    cluster_data.map(row => row[y_col]),
+                    cluster_data[x_col],
+                    cluster_data[y_col],
                     s=50,
                     alpha=0.7,
-                    color=colors[cluster % colors.length],
-                    label=`${label} (${cluster_data.length} sellers)`
-                );
-            }
-            if (cluster_centers_pd !== null && cluster_centers_pd.length > 0) {
-                if (x_col in cluster_centers_pd.columns && y_col in cluster_centers_pd.columns) {
+                    color=colors[int(cluster) % len(colors)],
+                    label=f"{label} ({len(cluster_data)} sellers)"
+                )
+            if cluster_centers_pd is not None and len(cluster_centers_pd) > 0:
+                if x_col in cluster_centers_pd.columns and y_col in cluster_centers_pd.columns:
                     plt.scatter(
                         cluster_centers_pd[x_col],
                         cluster_centers_pd[y_col],
@@ -689,257 +647,227 @@ class SparkSupplyChainAnalytics:
                         marker='X',
                         color='black',
                         label='Cluster Centers'
-                    );
-                }
-            }
-            plt.title('Seller Performance Clusters', fontsize=16);
-            plt.xlabel('Normalized Total Sales', fontsize=14);
-            plt.ylabel('Normalized Processing Time', fontsize=14);
-            plt.legend(fontsize=12);
-            plt.grid(True, alpha=0.3);
-            plt.figtext(0.01, 0.01, "Lower processing time and higher sales indicate better performance", fontsize=10);
-            plt.tight_layout();
-            plt.savefig(os.path.join(self.output_path, "seller_clusters.png"), dpi=300);
-            plt.close();
-        } catch (e) {
-            print(`Error creating seller cluster visualization: ${e}`);
-        }
+                    )
+            plt.title('Seller Performance Clusters', fontsize=16)
+            plt.xlabel('Normalized Total Sales', fontsize=14)
+            plt.ylabel('Normalized Processing Time', fontsize=14)
+            plt.legend(fontsize=12)
+            plt.grid(True, alpha=0.3)
+            plt.figtext(0.01, 0.01, "Lower processing time and higher sales indicate better performance", fontsize=10)
+            plt.tight_layout()
+            plt.savefig(os.path.join(self.output_path, "seller_clusters.png"), dpi=300)
+            plt.close()
+        except Exception as e:
+            print(f"Error creating seller cluster visualization: {e}")
 
-    def _visualize_seller_distribution(self, seller_clusters_pd) {
-        try {
-            if (!('prediction' in seller_clusters_pd.columns)) {
-                print("Missing 'prediction' column in seller clusters data");
-                return;
-            }
-            const cluster_counts = {};
-            seller_clusters_pd.forEach(row => {
-                const cluster = row['prediction'];
-                if (cluster !== undefined) {
-                    cluster_counts[cluster] = (cluster_counts[cluster] || 0) + 1;
-                }
-            });
-            plt.figure(figsize=(10, 10));
-            const colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd'];
-            const cluster_names = {0: 'High Performers', 1: 'Average Performers', 2: 'Low Performers'};
-            const labels = Object.keys(cluster_counts).map(i => cluster_names[i] || `Cluster ${i}`);
-            const sizes = Object.values(cluster_counts);
+    def _visualize_seller_distribution(self, seller_clusters_pd):
+        try:
+            if 'prediction' not in seller_clusters_pd.columns:
+                print("Missing 'prediction' column in seller clusters data")
+                return
+            cluster_counts = {}
+            for _, row in seller_clusters_pd.iterrows():
+                cluster = row['prediction']
+                if cluster is not None:
+                    cluster_counts[cluster] = cluster_counts.get(cluster, 0) + 1
+            plt.figure(figsize=(10, 10))
+            colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd']
+            cluster_names = {0: 'High Performers', 1: 'Average Performers', 2: 'Low Performers'}
+            labels = [cluster_names.get(i, f'Cluster {i}') for i in cluster_counts.keys()]
+            sizes = list(cluster_counts.values())
             plt.pie(
                 sizes,
                 labels=labels,
-                colors=Object.keys(cluster_counts).map(i => colors[i % colors.length]),
+                colors=[colors[int(i) % len(colors)] for i in cluster_counts.keys()],
                 autopct='%1.1f%%',
                 startangle=90,
                 shadow=False,
-                explode=Array(sizes.length).fill(0.05)
-            );
-            plt.title('Seller Distribution by Performance Cluster', fontsize=16);
-            plt.axis('equal');
-            plt.savefig(os.path.join(self.output_path, "seller_distribution.png"), dpi=300);
-            plt.close();
-        } catch (e) {
-            print(`Error creating seller distribution visualization: ${e}`);
-        }
-    }
+                explode=[0.05] * len(sizes)
+            )
+            plt.title('Seller Distribution by Performance Cluster', fontsize=16)
+            plt.axis('equal')
+            plt.savefig(os.path.join(self.output_path, "seller_distribution.png"), dpi=300)
+            plt.close()
+        except Exception as e:
+            print(f"Error creating seller distribution visualization: {e}")
 
-    def _visualize_geographical_patterns(self, state_metrics, top_category_by_state) {
-        try {
-            plt.figure(figsize=(12, 8));
-            const top_states = state_metrics.sort_values('order_count', ascending=false).head(10);
+    def _visualize_geographical_patterns(self, state_metrics, top_category_by_state):
+        try:
+            plt.figure(figsize=(12, 8))
+            top_states = state_metrics.sort_values('order_count', ascending=False).head(10)
             plt.bar(
                 top_states['customer_state'],
                 top_states['order_count'],
-                color=sns.color_palette("viridis", top_states.shape[0])
-            );
-            plt.title('Top 10 States by Order Count', fontsize=16);
-            plt.xlabel('State', fontsize=14);
-            plt.ylabel('Order Count', fontsize=14);
-            plt.tight_layout();
-            plt.savefig(os.path.join(self.output_path, "top_states.png"), dpi=300);
-            plt.close();
-            plt.figure(figsize=(12, 8));
-            const fastest_states = state_metrics.sort_values('avg_delivery_days').head(10);
+                color=sns.color_palette("viridis", int(top_states.shape[0]))
+            )
+            plt.title('Top 10 States by Order Count', fontsize=16)
+            plt.xlabel('State', fontsize=14)
+            plt.ylabel('Order Count', fontsize=14)
+            plt.tight_layout()
+            plt.savefig(os.path.join(self.output_path, "top_states.png"), dpi=300)
+            plt.close()
+            plt.figure(figsize=(12, 8))
+            fastest_states = state_metrics.sort_values('avg_delivery_days').head(10)
             plt.barh(
                 fastest_states['customer_state'],
                 fastest_states['avg_delivery_days'],
-                color=sns.color_palette("viridis", fastest_states.shape[0])
-            );
-            plt.title('States with Fastest Delivery Times', fontsize=16);
-            plt.xlabel('Average Delivery Days', fontsize=14);
-            plt.ylabel('State', fontsize=14);
-            plt.tight_layout();
-            plt.savefig(os.path.join(self.output_path, "delivery_by_state.png"), dpi=300);
-            plt.close();
-        } catch (e) {
-            print(`Error creating geographical visualizations: ${e}`);
-        }
-    }
+                color=sns.color_palette("viridis", int(fastest_states.shape[0]))
+            )
+            plt.title('States with Fastest Delivery Times', fontsize=16)
+            plt.xlabel('Average Delivery Days', fontsize=14)
+            plt.ylabel('State', fontsize=14)
+            plt.tight_layout()
+            plt.savefig(os.path.join(self.output_path, "delivery_by_state.png"), dpi=300)
+            plt.close()
+        except Exception as e:
+            print(f"Error creating geographical visualizations: {e}")
 
-    def _visualize_recommendations(self, recommendations) {
-        try {
-            const required_cols = ['product_category', 'reorder_point', 'safety_stock'];
-            required_cols.forEach(col => {
-                if (!(col in recommendations.columns)) {
-                    print(`Warning: Required column '${col}' missing from recommendations. Checking alternatives...`);
-                    if (col === 'product_category' && 'category' in recommendations.columns) {
-                        recommendations['product_category'] = recommendations['category'];
-                        print("Using 'category' instead of 'product_category'");
-                    } else if (col === 'safety_stock' && 'avg_monthly_demand' in recommendations.columns) {
-                        recommendations['safety_stock'] = recommendations['avg_monthly_demand'] * 0.3;
-                        print("Estimating safety_stock from avg_monthly_demand");
-                    } else if (col === 'reorder_point' && 'avg_monthly_demand' in recommendations.columns) {
-                        const safety_stock = recommendations.get('safety_stock', recommendations['avg_monthly_demand'] * 0.3);
-                        recommendations['reorder_point'] = recommendations['avg_monthly_demand'] + safety_stock;
-                        print("Estimating reorder_point from avg_monthly_demand and safety_stock");
-                    } else {
-                        print(`Cannot create visualization: missing required column '${col}' with no alternative`);
-                        return;
-                    }
-            });
-            plt.figure(figsize=(14, 8));
-            let sorted_recs = recommendations.sort_values('reorder_point', ascending=false).head(10);
-            const categories = sorted_recs['product_category'].values;
-            const x = Array.from({ length: categories.length }, (_, i) => i);
-            const width = 0.35;
-            plt.bar(x, sorted_recs['safety_stock'], width, label='Safety Stock', color='#1f77b4');
-            let lead_time_demand = sorted_recs['reorder_point'] - sorted_recs['safety_stock'];
-            lead_time_demand = lead_time_demand.map(val => Math.max(val, 0));
-            plt.bar(x, lead_time_demand, width, { bottom: sorted_recs['safety_stock'], label: 'Lead Time Demand', color: '#ff7f0e' });
-            let forecast_col = null;
-            for (const col of ['next_month_forecast', 'forecast_demand']) {
-                if (col in sorted_recs.columns) {
-                    forecast_col = col;
-                    break;
-                }
-            }
-            if (forecast_col) {
-                plt.plot(x, sorted_recs[forecast_col], 'ro-', { linewidth: 2, markersize: 8, label: 'Forecast Demand' });
-            }
-            plt.title('Inventory Recommendations for Top 10 Categories', { fontsize: 16 });
-            plt.xlabel('Product Category', { fontsize: 14 });
-            plt.ylabel('Units', { fontsize: 14 });
-            plt.xticks(x, categories, { rotation: 45, ha: 'right' });
-            plt.legend({ fontsize: 12 });
-            plt.grid(true, { axis: 'y', alpha: 0.3 });
-            plt.tight_layout();
-            plt.savefig(os.path.join(self.output_path, "reorder_recommendations.png"), { dpi: 300 });
-            plt.close();
-            if ('growth_rate' in recommendations.columns) {
-                plt.figure(figsize=(12, 8));
-                const scatter = plt.scatter(
+    def _visualize_recommendations(self, recommendations):
+        try:
+            required_cols = ['product_category', 'reorder_point', 'safety_stock']
+            for col in required_cols:
+                if col not in recommendations.columns:
+                    print(f"Warning: Required column '{col}' missing from recommendations. Checking alternatives...")
+                    if col == 'product_category' and 'category' in recommendations.columns:
+                        recommendations['product_category'] = recommendations['category']
+                        print("Using 'category' instead of 'product_category'")
+                    elif col == 'safety_stock' and 'avg_monthly_demand' in recommendations.columns:
+                        recommendations['safety_stock'] = recommendations['avg_monthly_demand'] * 0.3
+                        print("Estimating safety_stock from avg_monthly_demand")
+                    elif col == 'reorder_point' and 'avg_monthly_demand' in recommendations.columns:
+                        safety_stock = recommendations.get('safety_stock', recommendations['avg_monthly_demand'] * 0.3)
+                        recommendations['reorder_point'] = recommendations['avg_monthly_demand'] + safety_stock
+                        print("Estimating reorder_point from avg_monthly_demand and safety_stock")
+                    else:
+                        print(f"Cannot create visualization: missing required column '{col}' with no alternative")
+                        return
+            plt.figure(figsize=(14, 8))
+            sorted_recs = recommendations.sort_values('reorder_point', ascending=False).head(10)
+            categories = sorted_recs['product_category'].values
+            x = list(range(len(categories)))
+            width = 0.35
+            plt.bar(x, sorted_recs['safety_stock'], width, label='Safety Stock', color='#1f77b4')
+            lead_time_demand = sorted_recs['reorder_point'] - sorted_recs['safety_stock']
+            lead_time_demand = lead_time_demand.apply(lambda val: max(val, 0))
+            plt.bar(x, lead_time_demand, width, bottom=sorted_recs['safety_stock'], label='Lead Time Demand', color='#ff7f0e')
+            forecast_col = None
+            for col in ['next_month_forecast', 'forecast_demand']:
+                if col in sorted_recs.columns:
+                    forecast_col = col
+                    break
+            if forecast_col is not None:
+                plt.plot(x, sorted_recs[forecast_col], 'ro-', linewidth=2, markersize=8, label='Forecast Demand')
+            plt.title('Inventory Recommendations for Top 10 Categories', fontsize=16)
+            plt.xlabel('Product Category', fontsize=14)
+            plt.ylabel('Units', fontsize=14)
+            plt.xticks(x, categories, rotation=45, ha='right')
+            plt.legend(fontsize=12)
+            plt.grid(True, axis='y', alpha=0.3)
+            plt.tight_layout()
+            plt.savefig(os.path.join(self.output_path, "reorder_recommendations.png"), dpi=300)
+            plt.close()
+            if 'growth_rate' in recommendations.columns:
+                plt.figure(figsize=(12, 8))
+                scatter = plt.scatter(
                     recommendations['growth_rate'],
                     recommendations['safety_stock'],
-                    { s: ('avg_monthly_demand' in recommendations.columns ? recommendations['avg_monthly_demand'].map(val => val * 0.1) : 50),
-                      c: ('lead_time_days' in recommendations.columns ? recommendations['lead_time_days'] : 'blue'),
-                      cmap: 'viridis',
-                      alpha: 0.7 }
-                );
-                if ('lead_time_days' in recommendations.columns) {
-                    const cbar = plt.colorbar(scatter);
-                    cbar.set_label('Lead Time (days)', { fontsize: 12 });
-                }
-                plt.title('Safety Stock vs. Growth Rate by Category', { fontsize: 16 });
-                plt.xlabel('Growth Rate (%)', { fontsize: 14 });
-                plt.ylabel('Safety Stock (units)', { fontsize: 14 });
-                plt.grid(true, { alpha: 0.3 });
-                plt.tight_layout();
-                plt.savefig(os.path.join(self.output_path, "safety_stock_analysis.png"), { dpi: 300 });
-                plt.close();
-            }
-        } catch (e) {
-            print(`Error creating recommendation visualizations: ${e}`);
-        }
-    }
+                    s=recommendations['avg_monthly_demand'].apply(lambda val: val * 0.1) if 'avg_monthly_demand' in recommendations.columns else 50,
+                    c=recommendations['lead_time_days'] if 'lead_time_days' in recommendations.columns else 'blue',
+                    cmap='viridis',
+                    alpha=0.7
+                )
+                if 'lead_time_days' in recommendations.columns:
+                    cbar = plt.colorbar(scatter)
+                    cbar.set_label('Lead Time (days)', fontsize=12)
+                plt.title('Safety Stock vs. Growth Rate by Category', fontsize=16)
+                plt.xlabel('Growth Rate (%)', fontsize=14)
+                plt.ylabel('Safety Stock (units)', fontsize=14)
+                plt.grid(True, alpha=0.3)
+                plt.tight_layout()
+                plt.savefig(os.path.join(self.output_path, "safety_stock_analysis.png"), dpi=300)
+                plt.close()
+        except Exception as e:
+            print(f"Error creating recommendation visualizations: {e}")
 
     def process_orders(self, orders):
-        orders = orders.withColumn("order_purchase_timestamp", to_date(col("order_purchase_timestamp"), "yyyy-MM-dd HH:mm:ss"));
-        orders = orders.withColumn("order_approved_at", to_date(col("order_approved_at"), "yyyy-MM-dd HH:mm:ss"));
-        orders = orders.withColumn("order_year", year(col("order_purchase_timestamp")));
-        orders = orders.withColumn("order_month", month(col("order_purchase_timestamp")));
-        orders = orders.withColumn("processing_time", datediff(col("order_approved_at"), col("order_purchase_timestamp")));
-        orders = orders.withColumn("processing_time", when(col("processing_time") < 0, None).otherwise(col("processing_time")));
-        if ("order_delivered_timestamp" in orders.columns) {
-            orders = orders.withColumn("delivery_days", datediff(col("order_delivered_timestamp"), col("order_purchase_timestamp")));
-            if ("order_estimated_delivery_date" in orders.columns) {
+        orders = orders.withColumn("order_purchase_timestamp", to_date(col("order_purchase_timestamp"), "yyyy-MM-dd HH:mm:ss"))
+        orders = orders.withColumn("order_approved_at", to_date(col("order_approved_at"), "yyyy-MM-dd HH:mm:ss"))
+        orders = orders.withColumn("order_year", year(col("order_purchase_timestamp")))
+        orders = orders.withColumn("order_month", month(col("order_purchase_timestamp")))
+        orders = orders.withColumn("processing_time", datediff(col("order_approved_at"), col("order_purchase_timestamp")))
+        orders = orders.withColumn("processing_time", when(col("processing_time") < 0, None).otherwise(col("processing_time")))
+        if "order_delivered_timestamp" in orders.columns:
+            orders = orders.withColumn("delivery_days", datediff(col("order_delivered_timestamp"), col("order_purchase_timestamp")))
+            if "order_estimated_delivery_date" in orders.columns:
                 orders = orders.withColumn("on_time_delivery", when(
                     col("order_delivered_timestamp").isNotNull() & col("order_estimated_delivery_date").isNotNull(),
                     col("order_delivered_timestamp") <= col("order_estimated_delivery_date")
-                ).cast("int"));
-            }
-        } else {
-            orders = orders.withColumn("delivery_days", (datediff(col("order_approved_at"), col("order_purchase_timestamp")) + 5).cast("int"));
-            orders = orders.withColumn("on_time_delivery", when((col("order_id").rlike(".")), 1).otherwise(0));
-        }
-        orders = orders.withColumn("delivery_days", when(col("delivery_days").isNull(), 7).otherwise(col("delivery_days")));
-        orders = orders.withColumn("on_time_delivery", when(col("on_time_delivery").isNull(), 0.5).otherwise(col("on_time_delivery")));
-        if (!("order_estimated_delivery_date" in orders.columns)) {
-            orders = orders.withColumn("order_estimated_delivery_date", expr("date_add(order_approved_at, 7)"));
-        }
-        return orders;
+                ).cast("int"))
+        else:
+            orders = orders.withColumn("delivery_days", (datediff(col("order_approved_at"), col("order_purchase_timestamp")) + 5).cast("int"))
+            orders = orders.withColumn("on_time_delivery", when(col("order_id").rlike(".*"), 1).otherwise(0))
+        orders = orders.withColumn("delivery_days", when(col("delivery_days").isNull(), 7).otherwise(col("delivery_days")))
+        orders = orders.withColumn("on_time_delivery", when(col("on_time_delivery").isNull(), 0.5).otherwise(col("on_time_delivery")))
+        if "order_estimated_delivery_date" not in orders.columns:
+            orders = orders.withColumn("order_estimated_delivery_date", expr("date_add(order_approved_at, 7)"))
+        return orders
 
-# Helper function to run the analysis pipeline
 def run_spark_analysis(data_dir=".", output_dir="./output", top_n=15, forecast_periods=6):
-    analyzer = SparkSupplyChainAnalytics(data_path=data_dir, output_path=output_dir);
-    results = {};
+    analyzer = SparkSupplyChainAnalytics(data_path=data_dir, output_path=output_dir)
+    results = {}
     try:
-        analyzer.load_data();
-        analyzer.preprocess_data();
-        analyzer.build_unified_dataset();
-        let monthly_demand = null;
-        let top_categories = null;
-        try {
-            if (hasattr(analyzer, 'analyze_monthly_demand')) {
-                const original_method = analyzer._visualize_top_categories if hasattr(analyzer, '_visualize_top_categories') else null;
-                analyzer._visualize_top_categories = (x, y) => {};
-                const analysisResults = analyzer.analyze_monthly_demand(top_n=top_n);
-                monthly_demand = analysisResults[1];
-                top_categories = analysisResults[2];
-                if (original_method) {
-                    analyzer._visualize_top_categories = original_method;
-                } else {
-                    delattr(analyzer, '_visualize_top_categories');
-                }
-                results['monthly_demand'] = monthly_demand;
-                results['top_categories'] = top_categories;
-                print("Monthly demand analysis completed successfully");
-            } else {
-                print("analyze_monthly_demand method not available");
-            }
-        } except (e) {
-            print(`Error in monthly demand analysis: ${e}`);
-        }
-        let seller_clusters = null;
-        try {
-            if (hasattr(analyzer, 'analyze_seller_performance')) {
-                const original_method = analyzer._visualize_seller_clusters if hasattr(analyzer, '_visualize_seller_clusters') else null;
-                analyzer._visualize_seller_clusters = (x, y) => {};
-                const sellerResults = analyzer.analyze_seller_performance();
-                seller_clusters = sellerResults[1];
-                if (original_method) {
-                    analyzer._visualize_seller_clusters = original_method;
-                } else {
-                    delattr(analyzer, '_visualize_seller_clusters');
-                }
-                results['seller_clusters'] = seller_clusters;
-                print("Seller performance analysis completed successfully");
-            } else {
-                print("analyze_seller_performance method not available");
-            }
-        } except (e) {
-            print(`Error in seller performance analysis: ${e}`);
-        }
-        print("Analysis complete. Results saved to output directory.");
-        print("Note: Some advanced features were skipped due to missing methods.");
-    } except (e) {
-        print(`Error in supply chain analysis: ${e}`);
-    }
-    return results;
+        analyzer.load_data()
+        analyzer.preprocess_data()
+        analyzer.build_unified_dataset()
+        monthly_demand = None
+        top_categories = None
+        try:
+            if hasattr(analyzer, 'analyze_monthly_demand'):
+                original_method = analyzer._visualize_top_categories if hasattr(analyzer, '_visualize_top_categories') else None
+                analyzer._visualize_top_categories = lambda x, y: None
+                analysisResults = analyzer.analyze_monthly_demand(top_n=top_n)
+                monthly_demand = analysisResults[1]
+                top_categories = analysisResults[2]
+                if original_method is not None:
+                    analyzer._visualize_top_categories = original_method
+                else:
+                    delattr(analyzer, '_visualize_top_categories')
+                results['monthly_demand'] = monthly_demand
+                results['top_categories'] = top_categories
+                print("Monthly demand analysis completed successfully")
+            else:
+                print("analyze_monthly_demand method not available")
+        except Exception as e:
+            print(f"Error in monthly demand analysis: {e}")
+        seller_clusters = None
+        try:
+            if hasattr(analyzer, 'analyze_seller_performance'):
+                original_method = analyzer._visualize_seller_clusters if hasattr(analyzer, '_visualize_seller_clusters') else None
+                analyzer._visualize_seller_clusters = lambda x, y: None
+                sellerResults = analyzer.analyze_seller_performance()
+                seller_clusters = sellerResults[1]
+                if original_method is not None:
+                    analyzer._visualize_seller_clusters = original_method
+                else:
+                    delattr(analyzer, '_visualize_seller_clusters')
+                results['seller_clusters'] = seller_clusters
+                print("Seller performance analysis completed successfully")
+            else:
+                print("analyze_seller_performance method not available")
+        except Exception as e:
+            print(f"Error in seller performance analysis: {e}")
+        print("Analysis complete. Results saved to output directory.")
+        print("Note: Some advanced features were skipped due to missing methods.")
+    except Exception as e:
+        print(f"Error in supply chain analysis: {e}")
+    return results
 
 if __name__ == "__main__":
-    import argparse;
-    const parser = argparse.ArgumentParser(description='Supply Chain Analytics with Spark');
-    parser.add_argument('--data-dir', type=str, default='.', help='Directory containing data files');
-    parser.add_argument('--output-dir', type=str, default='./output', help='Directory to save output files');
-    parser.add_argument('--top-n', type=int, default=15, help='Number of top categories to analyze');
-    parser.add_argument('--forecast-periods', type=int, default=6, help='Number of periods to forecast');
-    const args = parser.parse_args();
-    run_spark_analysis(data_dir=args.data_dir, output_dir=args.output_dir, top_n=args.top_n, forecast_periods=args.forecast_periods);
+    import argparse
+    parser = argparse.ArgumentParser(description='Supply Chain Analytics with Spark')
+    parser.add_argument('--data-dir', type=str, default='.', help='Directory containing data files')
+    parser.add_argument('--output-dir', type=str, default='./output', help='Directory to save output files')
+    parser.add_argument('--top-n', type=int, default=15, help='Number of top categories to analyze')
+    parser.add_argument('--forecast-periods', type=int, default=6, help='Number of periods to forecast')
+    args = parser.parse_args()
+    run_spark_analysis(data_dir=args.data_dir, output_dir=args.output_dir, top_n=args.top_n, forecast_periods=args.forecast_periods)
