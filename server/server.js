@@ -10,7 +10,41 @@ const PORT = process.env.PORT || 5000;
 
 // Determine output directory from environment variable or use default.
 const OUTPUT_DIR = process.env.OUTPUT_DIR || path.join(__dirname, '../output');
+const { MongoClient, ObjectId } = require('mongodb');
 
+// MongoDB connection string from environment variable or use default
+const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/';
+const DB_NAME = process.env.DB_NAME || 'supply_chain_analytics';
+
+// MongoDB connection
+let mongoClient;
+let db;
+
+async function connectToMongoDB() {
+  try {
+    mongoClient = new MongoClient(MONGODB_URI);
+    await mongoClient.connect();
+    db = mongoClient.db(DB_NAME);
+    console.log(`Connected to MongoDB: ${DB_NAME}`);
+    return true;
+  } catch (error) {
+    console.error('Error connecting to MongoDB:', error);
+    return false;
+  }
+}
+
+// Initialize MongoDB connection on server start
+let mongoAvailable = false;
+connectToMongoDB()
+  .then(result => {
+    mongoAvailable = result;
+  })
+  .catch(err => {
+    console.error('Failed to initialize MongoDB connection:', err);
+    mongoAvailable = false;
+  });
+
+  
 // Middleware
 app.use(cors());
 app.use(express.json());
@@ -47,6 +81,7 @@ app.post('/api/run-analysis', (req, res) => {
     return res.json({ success: true, message: 'Analysis completed successfully' });
   });
 });
+
 
 // API endpoint to get list of available data files
 app.get('/api/data-files', (req, res) => {

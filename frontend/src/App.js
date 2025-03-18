@@ -12,7 +12,7 @@ import {
   ShoppingCart as OrderIcon,
   People as SellerIcon,
   Map as MapIcon,
-  Menu as MenuIcon
+  Menu as MenuIcon,
 } from '@mui/icons-material';
 
 // Import components
@@ -22,7 +22,6 @@ import ProductCategoriesPage from './pages/ProductCategoriesPage';
 import SellerPerformancePage from './pages/SellerPerformancePage';
 import GeographicalAnalysisPage from './pages/GeographicalAnalysisPage';
 import RecommendationsPage from './pages/RecommendationsPage';
-
 // Import services
 import { loadDashboardData } from './services/dataService';
 

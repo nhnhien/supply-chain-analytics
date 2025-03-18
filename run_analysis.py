@@ -13,6 +13,7 @@ import argparse
 import subprocess
 import datetime
 import shutil
+import pandas as pd
 
 def parse_arguments():
     """Parse command line arguments"""
@@ -26,7 +27,13 @@ def parse_arguments():
     parser.add_argument('--supplier-clusters', type=int, default=3, help='Number of supplier clusters to create')
     parser.add_argument('--clean', action='store_true', help='Clean output directory before running')
     parser.add_argument('--skip-frontend', action='store_true', help='Skip frontend setup')
-    
+    parser.add_argument('--use-mongodb', action='store_true', help='Store results in MongoDB')
+    parser.add_argument('--mongodb-uri', type=str, default='mongodb://localhost:27017/', 
+                        help='MongoDB connection URI')
+    parser.add_argument('--mongodb-db', type=str, default='supply_chain_analytics',
+                        help='MongoDB database name')
+    parser.add_argument('--use-spark', action='store_true', help='Use Apache Spark for data processing')
+
     return parser.parse_args()
 
 def ensure_directory(directory):
@@ -100,16 +107,46 @@ def check_required_files(output_dir):
 
 def run_analysis(args):
     """Run the main analysis using parsed arguments"""
-    # Construct the command
-    cmd = [
-        "python", 
-        os.path.join("backend", "main.py"),
-        f"--data-dir={args.data_dir}",
-        f"--output-dir={args.output_dir}",
-        f"--top-n={args.top_n}",
-        f"--forecast-periods={args.forecast_periods}"
-    ]
+
+    if args.use_spark:
+        script_to_run = os.path.join("backend", "spark_implementation.py")
+        print("Running analysis with Spark...")
+        
+        # For Spark, only include the arguments it recognizes
+        cmd = [
+            "python", 
+            script_to_run,
+            f"--data-dir={args.data_dir}",
+            f"--output-dir={args.output_dir}",
+            f"--top-n={args.top_n}",
+            f"--forecast-periods={args.forecast_periods}"
+        ]
+        
+        # Avoid adding MongoDB args to Spark implementation
+        use_mongodb_after_spark = args.use_mongodb
+    else:
+        script_to_run = os.path.join("backend", "main.py")
+        print("Running analysis with pandas...")
+        
+        # For standard analysis, include all arguments
+        cmd = [
+            "python", 
+            script_to_run,
+            f"--data-dir={args.data_dir}",
+            f"--output-dir={args.output_dir}",
+            f"--top-n={args.top_n}",
+            f"--forecast-periods={args.forecast_periods}"
+        ]
+        
+        # Add MongoDB options if specified
+        if args.use_mongodb:
+            cmd.append("--use-mongodb")
+            cmd.append(f"--mongodb-uri={args.mongodb_uri}")
+            cmd.append(f"--mongodb-db={args.mongodb_db}")
+        
+        use_mongodb_after_spark = False
     
+    # Add common arguments
     if args.use_auto_arima:
         cmd.append("--use-auto-arima")
         
@@ -124,13 +161,100 @@ def run_analysis(args):
     print(f"Command: {' '.join(cmd)}")
     
     try:
+        # Set environment variables for MongoDB if needed
+        if args.use_mongodb:
+            os.environ['MONGODB_URI'] = args.mongodb_uri
+            os.environ['MONGODB_DB'] = args.mongodb_db
+        
+        # Run analysis
         subprocess.run(cmd, check=True)
+        
+        # If using Spark with MongoDB, store the results in MongoDB after Spark processing
+        if use_mongodb_after_spark:
+            # Import after Spark processing completes
+            sys.path.append('./backend')
+            try:
+                from mongodb_storage import MongoDBStorage
+                
+                # Generate a run ID
+                from datetime import datetime
+                run_id = datetime.now().strftime("%Y%m%d%H%M%S")
+                
+                # Initialize MongoDB storage
+                storage = MongoDBStorage(args.mongodb_uri, args.mongodb_db)
+                
+                # Store metadata
+                metadata = {
+                    'run_id': run_id,
+                    'timestamp': datetime.now(),
+                    'parameters': {
+                        'data_dir': args.data_dir,
+                        'output_dir': args.output_dir,
+                        'top_n': args.top_n,
+                        'forecast_periods': args.forecast_periods,
+                        'use_spark': True,
+                        'use_auto_arima': args.use_auto_arima,
+                        'seasonal': args.seasonal,
+                        'supplier_clusters': args.supplier_clusters
+                    },
+                    'engine': 'spark'
+                }
+                storage.store_analysis_metadata(metadata)
+                
+                print("Storing Spark results in MongoDB...")
+                
+                # Load and store monthly demand
+                try:
+                    demand_path = os.path.join(args.output_dir, 'monthly_demand.csv')
+                    if os.path.exists(demand_path):
+                        demand_df = pd.read_csv(demand_path)
+                        storage.store_monthly_demand(demand_df, run_id)
+                        print("Stored monthly demand data in MongoDB")
+                    else:
+                        print(f"Warning: {demand_path} not found")
+                        
+                    # Load and store forecast report
+                    forecast_path = os.path.join(args.output_dir, 'forecast_report.csv')
+                    if os.path.exists(forecast_path):
+                        forecast_df = pd.read_csv(forecast_path)
+                        storage.store_forecasts(forecast_df, run_id)
+                        print("Stored forecast data in MongoDB")
+                    else:
+                        print(f"Warning: {forecast_path} not found")
+                        
+                    # Load and store seller clusters
+                    seller_path = os.path.join(args.output_dir, 'seller_clusters.csv')
+                    if os.path.exists(seller_path):
+                        seller_df = pd.read_csv(seller_path)
+                        storage.store_supplier_clusters(seller_df, run_id)
+                        print("Stored supplier clustering data in MongoDB")
+                    else:
+                        print(f"Warning: {seller_path} not found")
+                        
+                    # Load and store recommendations
+                    recom_path = os.path.join(args.output_dir, 'reorder_recommendations.csv')
+                    if os.path.exists(recom_path):
+                        recom_df = pd.read_csv(recom_path)
+                        storage.store_inventory_recommendations(recom_df, run_id)
+                        print("Stored inventory recommendations in MongoDB")
+                    else:
+                        print(f"Warning: {recom_path} not found")
+                    
+                    print(f"Spark analysis results stored in MongoDB with run_id: {run_id}")
+                except Exception as e:
+                    print(f"Error storing output files in MongoDB: {e}")
+                
+                storage.close()
+            except ImportError as e:
+                print(f"MongoDB integration not available. Error: {e}")
+            except Exception as e:
+                print(f"Error storing Spark results in MongoDB: {e}")
+                
     except subprocess.CalledProcessError as e:
         print(f"Error running analysis: {e}")
         return False
     
     return True
-
 def run_supplier_analysis(args):
     """Run additional supplier analysis"""
     # Check if seller_clusters.csv exists
@@ -227,11 +351,20 @@ def create_summary(args):
     print("\nOutput directory:")
     print(f"  {os.path.abspath(args.output_dir)}")
     
+    # Add MongoDB info if used
+    if args.use_mongodb:
+        print("\nMongoDB Storage:")
+        print(f"  Database: {args.mongodb_db}")
+        print(f"  Connection URI: {args.mongodb_uri.split('@')[-1] if '@' in args.mongodb_uri else args.mongodb_uri}")
+        print("  Collections: demand_data, forecasts, suppliers, inventory, analysis_metadata")
+    
     print("\nNext steps:")
     print("  1. Review the summary report: output/summary_report.md")
     print("  2. Explore visualizations in the output directory")
     print("  3. Use the frontend for interactive analysis:")
     print("     cd frontend && npm start")
+    if args.use_mongodb:
+        print("  4. Access your data in MongoDB Atlas dashboard")
     
     print("="*80)
 

@@ -26,6 +26,13 @@ from data_preprocessing import (
     calculate_performance_metrics
 )
 
+try:
+    from mongodb_storage import MongoDBStorage
+    MONGODB_AVAILABLE = True
+except ImportError:
+    MONGODB_AVAILABLE = False
+    print("MongoDB integration not available. Install pymongo to enable MongoDB storage.")
+
 
 def calculate_delivery_days(orders, supply_chain=None):
     """
@@ -101,8 +108,11 @@ def calculate_delivery_days(orders, supply_chain=None):
     orders['delivery_days'] = orders['delivery_days'].clip(1, 30)
     return orders
 
+
+
+
 def parse_arguments():
-    """Parse command line arguments."""
+    """Parse command line arguments"""
     parser = argparse.ArgumentParser(description='Supply Chain Analytics for Demand Forecasting')
     parser.add_argument('--data-dir', type=str, default='.', help='Directory containing data files')
     parser.add_argument('--output-dir', type=str, default='./output', help='Directory to save output files')
@@ -111,6 +121,10 @@ def parse_arguments():
     parser.add_argument('--use-auto-arima', action='store_true', help='Use auto ARIMA parameter selection')
     parser.add_argument('--seasonal', action='store_true', help='Include seasonality in the model')
     parser.add_argument('--supplier-clusters', type=int, default=3, help='Number of supplier clusters to create')
+    parser.add_argument('--use-mongodb', action='store_true', help='Store results in MongoDB')
+    parser.add_argument('--mongodb-uri', type=str, default='mongodb://localhost:27017/', help='MongoDB connection URI')
+    parser.add_argument('--mongodb-db', type=str, default='supply_chain_analytics', help='MongoDB database name')
+    
     return parser.parse_args()
 
 def ensure_directory(directory):
@@ -383,12 +397,113 @@ def run_pandas_analysis(args):
         'performance_metrics': performance_metrics
     }
 
+def store_results_in_mongodb(results, args):
+    """
+    Store analysis results in MongoDB.
+    
+    Args:
+        results: Dictionary of analysis results
+        args: Command line arguments
+        
+    Returns:
+        run_id: Analysis run ID
+    """
+    try:
+        from mongodb_storage import MongoDBStorage
+        
+        # Get MongoDB connection string from environment or use default
+        import os
+        connection_string = os.environ.get('MONGODB_URI', 'mongodb://localhost:27017/')
+        
+        # Initialize MongoDB storage
+        storage = MongoDBStorage(connection_string)
+        
+        # Generate a run ID
+        from datetime import datetime
+        run_id = datetime.now().strftime("%Y%m%d%H%M%S")
+        
+        # Store analysis metadata
+        metadata = {
+            'run_id': run_id,
+            'timestamp': datetime.now(),
+            'parameters': {
+                'data_dir': args.data_dir,
+                'output_dir': args.output_dir,
+                'top_n': args.top_n,
+                'forecast_periods': args.forecast_periods,
+                'use_auto_arima': args.use_auto_arima,
+                'seasonal': args.seasonal,
+                'supplier_clusters': args.supplier_clusters
+            },
+            'execution_environment': {
+                'platform': os.sys.platform,
+                'python_version': os.sys.version
+            }
+        }
+        storage.store_analysis_metadata(metadata)
+        
+        # Store monthly demand data
+        if 'monthly_demand' in results:
+            storage.store_monthly_demand(results['monthly_demand'], run_id)
+        
+        # Store forecasts
+        if 'forecasts' in results:
+            # Convert forecasts dictionary to DataFrame
+            import pandas as pd
+            forecasts_list = []
+            for category, forecast_df in results['forecasts'].items():
+                forecast_record = {
+                    'category': category,
+                    'forecast_values': forecast_df['forecast'].tolist() if hasattr(forecast_df, 'tolist') else forecast_df['forecast'].values.tolist()
+                }
+                
+                # Add confidence intervals if available
+                if 'lower_ci' in forecast_df.columns and 'upper_ci' in forecast_df.columns:
+                    forecast_record['lower_ci'] = forecast_df['lower_ci'].tolist() if hasattr(forecast_df['lower_ci'], 'tolist') else forecast_df['lower_ci'].values.tolist()
+                    forecast_record['upper_ci'] = forecast_df['upper_ci'].tolist() if hasattr(forecast_df['upper_ci'], 'tolist') else forecast_df['upper_ci'].values.tolist()
+                
+                # Add growth rate if available in a separate mapping
+                if category in results.get('growth_rates', {}):
+                    forecast_record['growth_rate'] = results['growth_rates'][category]
+                
+                forecasts_list.append(forecast_record)
+            
+            forecasts_df = pd.DataFrame(forecasts_list)
+            storage.store_forecasts(forecasts_df, run_id)
+        
+        # Store seller performance clusters
+        if 'seller_performance' in results:
+            storage.store_supplier_clusters(results['seller_performance'], run_id)
+        
+        # Store inventory recommendations
+        if 'recommendations' in results:
+            storage.store_inventory_recommendations(results['recommendations'], run_id)
+        
+        storage.close()
+        print(f"Analysis results stored in MongoDB with run_id: {run_id}")
+        return run_id
+        
+    except ImportError:
+        print("Warning: MongoDB integration not available. Install pymongo to enable MongoDB storage.")
+        return None
+    except Exception as e:
+        print(f"Error storing results in MongoDB: {e}")
+        return None
+
 def main():
     args = parse_arguments()
     warnings.filterwarnings("ignore")
     ensure_directory(args.output_dir)
     results = run_pandas_analysis(args)
-    
+
+    # Store results in MongoDB if requested
+    if args.use_mongodb and MONGODB_AVAILABLE:
+        run_id = store_results_in_mongodb(results, args)
+        if run_id:
+            # Add run_id to summary report
+            with open(os.path.join(args.output_dir, 'summary_report.md'), 'a') as f:
+                f.write(f"\n\n## MongoDB Storage\n\nResults stored in MongoDB with run_id: {run_id}\n")
+
     print("Generating summary report...");
     report = [
         "# Supply Chain Analytics for Demand Forecasting",
@@ -454,6 +569,8 @@ def main():
         f.write('\n'.join(report))
     
     print(f"Summary report saved to {os.path.join(args.output_dir, 'summary_report.md')}")
+
+
 
 if __name__ == "__main__":
     main()

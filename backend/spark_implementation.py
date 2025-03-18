@@ -29,7 +29,7 @@ class SparkSupplyChainAnalytics:
         self.spark = spark if spark else self._create_spark_session()
         os.makedirs(output_path, exist_ok=True)
         # Set checkpoint directory for Spark to break lineage chains
-        self.spark.sparkContext.setCheckpointDir(os.path.join(self.output_path, "checkpoints"))
+        # self.spark.sparkContext.setCheckpointDir(os.path.join(self.output_path, "checkpoints"))
         
         # Data containers
         self.orders_df = None
@@ -38,18 +38,29 @@ class SparkSupplyChainAnalytics:
         self.customers_df = None
         self.unified_df = None
 
+    # def _create_spark_session(self):
+    #     return (SparkSession.builder
+    #             .appName("Supply Chain Analytics")
+    #             .config("spark.executor.memory", "4g")
+    #             .config("spark.driver.memory", "4g")
+    #             .config("spark.memory.offHeap.enabled", "true")
+    #             .config("spark.memory.offHeap.size", "4g")
+    #             .config("spark.dynamicAllocation.enabled", "true")
+    #             .config("spark.sql.adaptive.enabled", "true")
+    #             .config("spark.sql.shuffle.partitions", "100")
+        #             .getOrCreate())
     def _create_spark_session(self):
         return (SparkSession.builder
                 .appName("Supply Chain Analytics")
                 .config("spark.executor.memory", "4g")
                 .config("spark.driver.memory", "4g")
-                .config("spark.memory.offHeap.enabled", "true")
-                .config("spark.memory.offHeap.size", "4g")
-                .config("spark.dynamicAllocation.enabled", "true")
-                .config("spark.sql.adaptive.enabled", "true")
-                .config("spark.sql.shuffle.partitions", "100")
+                # Add these configurations for Windows
+                .config("spark.hadoop.mapreduce.fileoutputcommitter.algorithm.version", "2")
+                .config("spark.speculation", "false")
+                # Disable native libraries
+                .config("spark.hadoop.mapreduce.child.java.opts", "-XX:+UseCompressedOops -Dhadoop.home.dir=.")
                 .getOrCreate())
-
+                
     def load_data(self):
         print("Loading data using Spark...")
         # Load orders data
@@ -173,7 +184,8 @@ class SparkSupplyChainAnalytics:
         unified_df = unified_df.join(self.products_df, on="product_id", how="left")
         unified_df = unified_df.join(self.customers_df, on="customer_id", how="left")
         # Cache and checkpoint to manage memory usage.
-        self.unified_df = unified_df.persist().checkpoint()
+        # self.unified_df = unified_df.persist().checkpoint()
+        self.unified_df = unified_df.persist()
         total_rows = self.unified_df.count()
         total_orders = self.unified_df.select("order_id").distinct().count()
         total_products = self.unified_df.select("product_id").distinct().count()
