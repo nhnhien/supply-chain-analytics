@@ -346,14 +346,6 @@ def run_pandas_analysis(args):
     visualizer.visualize_seller_clusters(seller_performance)
     visualizer.visualize_reorder_recommendations(recommendations_df)
     
-    # This method doesn't exist in the SupplyChainVisualizer class, so commenting it out
-    # visualizer.create_supply_chain_dashboard(
-    #     monthly_demand[monthly_demand['product_category_name'].isin(top_categories[:10])],
-    #     seller_performance,
-    #     forecasts,
-    #     recommendations_df
-    # )
-    
     performance_summary = pd.DataFrame({
         'metric': [
             'Total Orders',

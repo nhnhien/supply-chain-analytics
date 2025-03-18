@@ -3,7 +3,7 @@ import { BrowserRouter as Router, Routes, Route, Link } from 'react-router-dom';
 import { 
   AppBar, Toolbar, Typography, Container, Grid, Paper, 
   Box, Drawer, List, ListItem, ListItemIcon, ListItemText,
-  CssBaseline, IconButton, Divider
+  CssBaseline, IconButton, Divider, Alert
 } from '@mui/material';
 import { 
   Dashboard as DashboardIcon,
@@ -31,12 +31,20 @@ function App() {
   const [dashboardData, setDashboardData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [dataWarnings, setDataWarnings] = useState([]);
   
   useEffect(() => {
     async function fetchData() {
       try {
         setLoading(true);
         const data = await loadDashboardData();
+        
+        // Check for data warnings received from the API
+        if (data.dataWarnings && data.dataWarnings.length > 0) {
+          setDataWarnings(data.dataWarnings);
+          console.warn("Data quality warnings:", data.dataWarnings);
+        }
+        
         setDashboardData(data);
         setLoading(false);
       } catch (err) {
@@ -84,12 +92,29 @@ function App() {
   );
   
   if (loading) {
-    return <div>Loading dashboard data...</div>;
+    return (
+      <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
+        <Typography variant="h5">Loading dashboard data...</Typography>
+      </Box>
+    );
   }
   
   if (error) {
-    return <div>Error: {error}</div>;
+    return (
+      <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', flexDirection: 'column', p: 3 }}>
+        <Typography variant="h5" color="error" gutterBottom>Error</Typography>
+        <Typography>{error}</Typography>
+      </Box>
+    );
   }
+  
+  // Create safe empty objects for each data section to prevent null reference errors
+  const safeData = dashboardData || {};
+  const safeForecasts = safeData.forecasts || {};
+  const safeCategories = safeData.categories || { topCategories: [], categoryData: {} };
+  const safeSellerPerformance = safeData.sellerPerformance || { clusters: [] };
+  const safeGeography = safeData.geography || { stateMetrics: [] };
+  const safeRecommendations = safeData.recommendations || { inventory: [] };
   
   return (
     <Router>
@@ -130,14 +155,22 @@ function App() {
         
         <Box component="main" sx={{ flexGrow: 1, p: 3 }}>
           <Toolbar /> {/* This adds spacing below the AppBar */}
+          
+          {/* Display data warnings if any */}
+          {dataWarnings.length > 0 && (
+            <Alert severity="warning" sx={{ mb: 3 }}>
+              Some data quality issues were detected. Some visualizations may be incomplete.
+            </Alert>
+          )}
+          
           <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
             <Routes>
-              <Route path="/" element={<DashboardPage data={dashboardData} />} />
-              <Route path="/forecast" element={<DemandForecastPage data={dashboardData?.forecasts} />} />
-              <Route path="/categories" element={<ProductCategoriesPage data={dashboardData?.categories} />} />
-              <Route path="/sellers" element={<SellerPerformancePage data={dashboardData?.sellerPerformance} />} />
-              <Route path="/geography" element={<GeographicalAnalysisPage data={dashboardData?.geography} />} />
-              <Route path="/recommendations" element={<RecommendationsPage data={dashboardData?.recommendations} />} />
+              <Route path="/" element={<DashboardPage data={safeData} />} />
+              <Route path="/forecast" element={<DemandForecastPage data={safeForecasts} />} />
+              <Route path="/categories" element={<ProductCategoriesPage data={safeCategories} />} />
+              <Route path="/sellers" element={<SellerPerformancePage data={safeSellerPerformance} />} />
+              <Route path="/geography" element={<GeographicalAnalysisPage data={safeGeography} />} />
+              <Route path="/recommendations" element={<RecommendationsPage data={safeRecommendations} />} />
             </Routes>
           </Container>
         </Box>

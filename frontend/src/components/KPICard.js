@@ -1,17 +1,9 @@
+// In KPICard.js
 import React from 'react';
-import { Box, Card, CardContent, Typography, Avatar } from '@mui/material';
+import { Box, Card, CardContent, Typography, Avatar, Tooltip } from '@mui/material';
+import { Info as InfoIcon } from '@mui/icons-material';
 
-/**
- * KPI Card Component that displays a key performance indicator with an icon
- * 
- * @param {Object} props Component props
- * @param {string} props.title Title of the KPI
- * @param {string} props.value Value to display
- * @param {React.ReactNode} props.icon Icon to display
- * @param {string} props.color Background color for the icon
- * @param {string} props.trend Trend direction: 'up', 'down', or 'flat'
- */
-const KPICard = ({ title, value, icon, color = "#1976d2", trend = null }) => {
+const KPICard = ({ title, value, icon, color = "#1976d2", trend = null, isEstimated = false }) => {
   return (
     <Card elevation={2} sx={{ height: '100%' }}>
       <CardContent>
@@ -19,6 +11,11 @@ const KPICard = ({ title, value, icon, color = "#1976d2", trend = null }) => {
           <Box>
             <Typography variant="body2" color="text.secondary" gutterBottom>
               {title}
+              {isEstimated && (
+                <Tooltip title="Value is estimated based on available data">
+                  <InfoIcon fontSize="small" sx={{ ml: 1, verticalAlign: 'middle', color: 'warning.main' }} />
+                </Tooltip>
+              )}
             </Typography>
             <Typography variant="h5" component="div">
               {value}

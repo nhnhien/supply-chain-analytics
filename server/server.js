@@ -23,8 +23,8 @@ app.use('/data', express.static(OUTPUT_DIR));
 app.post('/api/run-analysis', (req, res) => {
   const { dataDir, topN, forecastPeriods, useSpark } = req.body;
   
-  // Updated command: reference python script in the backend directory.
-  let command = `python backend/main.py --data-dir=${dataDir || '.'} --output-dir=${OUTPUT_DIR} --top-n=${topN || 5} --forecast-periods=${forecastPeriods || 6}`;
+  // Using path.join for reliable path resolution across environments
+  let command = `python ${path.join(__dirname, '..', 'backend', 'main.py')} --data-dir=${dataDir || '.'} --output-dir=${OUTPUT_DIR} --top-n=${topN || 5} --forecast-periods=${forecastPeriods || 6}`;
   
   if (useSpark) {
     command += ' --use-spark';
@@ -154,16 +154,40 @@ app.get('/api/dashboard-data', (req, res) => {
       fs.readFile(filePath, 'utf8', (err, data) => {
         if (err) {
           console.error(`Error reading ${key} file: ${err}`);
-          return reject(err);
+          return reject({ key, error: err.message, type: 'file_read_error' });
         }
         
         try {
           const records = parse(data, { columns: true, skip_empty_lines: true });
-          resolve({ key, data: records });
+          
+          // Check if we have valid data (at least some rows)
+          if (!records || records.length === 0) {
+            console.warn(`Warning: ${key} file contains no data records`);
+          }
+          
+          resolve({ key, data: records, status: 'success' });
         } catch (parseError) {
-          console.error(`Error parsing ${key} CSV: ${parseError}. Returning empty array as fallback.`);
-          // Instead of rejecting, resolve with an empty array for this file.
-          resolve({ key, data: [] });
+          console.error(`Error parsing ${key} CSV: ${parseError}`);
+          
+          // Determine if this is a critical file
+          const isCritical = ['monthlyDemand', 'forecastReport'].includes(key);
+          
+          if (isCritical) {
+            // For critical files, reject with error details
+            reject({ 
+              key, 
+              error: `Failed to parse critical file: ${parseError.message}`, 
+              type: 'parse_error_critical' 
+            });
+          } else {
+            // For non-critical files, resolve with error status but empty data
+            resolve({ 
+              key, 
+              data: [], 
+              status: 'parse_error',
+              error: parseError.message
+            });
+          }
         }
       });
     });
@@ -171,10 +195,21 @@ app.get('/api/dashboard-data', (req, res) => {
   
   Promise.all(filePromises)
     .then(results => {
-      const data = results.reduce((acc, { key, data }) => {
-        acc[key] = data;
-        return acc;
-      }, {});
+      // Process results and track any parsing errors
+      const data = {};
+      const dataWarnings = [];
+      
+      results.forEach(result => {
+        data[result.key] = result.data;
+        
+        // If there was a parse error for non-critical files, track it
+        if (result.status === 'parse_error') {
+          dataWarnings.push({
+            dataType: result.key,
+            message: result.error
+          });
+        }
+      });
       
       // Helper functions defined inline for dashboard processing.
       function processDemandData(data) {
@@ -341,13 +376,13 @@ app.get('/api/dashboard-data', (req, res) => {
         },
         forecasts: {
           forecastReport: data.forecastReport,
-          performanceMetrics: data.forecastReport.map(row => ({
+          performanceMetrics: Array.isArray(data.forecastReport) ? data.forecastReport.map(row => ({
             category: row.category,
             mape: row.mape,
             rmse: row.rmse,
             mae: row.mae,
             growth_rate: row.growth_rate
-          }))
+          })) : []
         },
         sellerPerformance: {
           clusters: data.sellerClusters,
@@ -363,11 +398,26 @@ app.get('/api/dashboard-data', (req, res) => {
         dashboardData.geography = { stateMetrics: data.stateMetrics };
       }
       
+      // If there were any data warnings, include them in the response
+      if (dataWarnings.length > 0) {
+        dashboardData.dataWarnings = dataWarnings;
+      }
+      
       return res.json(dashboardData);
     })
     .catch(error => {
       console.error('Error processing dashboard data:', error);
-      return res.status(500).json({ error: error.message });
+      
+      // Provide a meaningful error to the client
+      if (error.type && error.key) {
+        return res.status(500).json({
+          error: `Data processing failed: ${error.error}`,
+          failedComponent: error.key,
+          errorType: error.type
+        });
+      } else {
+        return res.status(500).json({ error: 'Failed to process dashboard data' });
+      }
     });
 });
 

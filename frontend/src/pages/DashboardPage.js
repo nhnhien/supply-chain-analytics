@@ -13,6 +13,7 @@ import {
   Info as InfoIcon
 } from '@mui/icons-material';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer, BarChart, Bar, Cell } from 'recharts';
+import KPICard from '../components/KPICard';
 
 // Import custom components
 import TopCategoriesChart from '../components/TopCategoriesChart';
@@ -26,50 +27,6 @@ const MonthlyProfitChart = ({ data }) => {
   }, []); // Fixed: closing parenthesis added here
   
   return <div>Monthly Profit Chart Placeholder</div>;
-};
-
-// KPI Card Component with estimated flag
-const KPICard = ({ title, value, icon, color = "#1976d2", trend = null, isEstimated = false }) => {
-  return (
-    <Card elevation={2} sx={{ height: '100%' }}>
-      <CardContent>
-        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <Box>
-            <Typography variant="body2" color="text.secondary" gutterBottom>
-              {title}
-              {isEstimated && (
-                <Tooltip title="Value is estimated based on available data">
-                  <InfoIcon fontSize="small" sx={{ ml: 1, verticalAlign: 'middle', color: 'warning.main' }} />
-                </Tooltip>
-              )}
-            </Typography>
-            <Typography variant="h5" component="div">
-              {value}
-            </Typography>
-            {trend && (
-              <Typography 
-                variant="caption" 
-                color={trend === 'up' ? 'success.main' : trend === 'down' ? 'error.main' : 'text.secondary'}
-              >
-                {trend === 'up' ? '↑ ' : trend === 'down' ? '↓ ' : ''}
-                {trend !== 'flat' && 'vs. last period'}
-              </Typography>
-            )}
-          </Box>
-          <Avatar 
-            sx={{ 
-              bgcolor: color, 
-              width: 48, 
-              height: 48,
-              boxShadow: 1
-            }}
-          >
-            {icon}
-          </Avatar>
-        </Box>
-      </CardContent>
-    </Card>
-  );
 };
 
 const DashboardPage = ({ data }) => {
@@ -159,11 +116,12 @@ const DashboardPage = ({ data }) => {
       {/* KPI Summary Cards */}
       <Grid container spacing={3} sx={{ mb: 4 }}>
         <Grid item xs={12} sm={6} md={4} lg={2}>
-          <KPICard 
+        <KPICard 
             title="Processing Time"
             value={`${formattedKPIs.processingTime} days`}
             icon={<ShippingIcon />}
             color="#1976d2"
+            isEstimated={kpis.estimated_fields && kpis.estimated_fields.includes('avg_processing_time')}
           />
         </Grid>
         <Grid item xs={12} sm={6} md={4} lg={2}>
