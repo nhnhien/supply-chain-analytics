@@ -5,8 +5,8 @@ import Papa from 'papaparse';
 const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || 'http://localhost:5000/api';
 
 /**
- * Enhanced function to parse CSV files with proper handling of data types
- * and special values.
+ * Enhanced function to parse CSV files with proper handling of data types,
+ * special values, and additional error handling for malformed data.
  * 
  * @param {string} filePath - Path to the CSV file.
  * @param {Function} mockDataGenerator - Function to generate mock data if needed.
@@ -49,42 +49,67 @@ export async function loadCsvData(filePath, mockDataGenerator) {
             console.error("CSV parsing errors:", results.errors);
             return reject(new Error("CSV parsing errors: " + JSON.stringify(results.errors)));
           }
-          const processedData = results.data
-            .filter(row => Object.keys(row).length > 1)
-            .map(row => {
-              const numericFields = [
-                'avg_historical_demand', 'forecast_demand', 'min_forecast', 'max_forecast',
-                'growth_rate', 'mape', 'rmse', 'mae', 'order_count', 'count',
-                'avg_processing_time', 'avg_delivery_days', 'total_sales',
-                'safety_stock', 'reorder_point', 'next_month_forecast',
-                'on_time_delivery', 'perfect_order_rate', 'inventory_turnover',
-                'lead_time_days', 'days_between_orders', 'avg_item_cost'
-              ];
-              for (const field of numericFields) {
-                if (field in row && row[field] !== null) {
-                  const parsed = parseFloat(row[field]);
-                  // Default to 0 if parsed value is NaN or not finite (handles Infinity cases)
-                  row[field] = (!isNaN(parsed) && isFinite(parsed)) ? parsed : 0;
+          const numericFields = [
+            'avg_historical_demand', 'forecast_demand', 'min_forecast', 'max_forecast',
+            'growth_rate', 'mape', 'rmse', 'mae', 'order_count', 'count',
+            'avg_processing_time', 'avg_delivery_days', 'total_sales',
+            'safety_stock', 'reorder_point', 'next_month_forecast',
+            'on_time_delivery', 'perfect_order_rate', 'inventory_turnover',
+            'lead_time_days', 'days_between_orders', 'avg_item_cost'
+          ];
+          let processedData = [];
+          try {
+            processedData = results.data
+              .filter(row => Object.keys(row).length > 1)
+              .map(row => {
+                try {
+                  // Convert numeric fields
+                  for (const field of numericFields) {
+                    if (field in row && row[field] !== null) {
+                      const parsed = parseFloat(row[field]);
+                      // Default to 0 if parsed value is NaN or not finite (handles Infinity cases)
+                      row[field] = (!isNaN(parsed) && isFinite(parsed)) ? parsed : 0;
+                    }
+                  }
+                  // Parse date field with error handling
+                  if (row.date && typeof row.date === 'string') {
+                    try {
+                      const parsedDate = new Date(row.date);
+                      if (isNaN(parsedDate.getTime())) {
+                        console.warn(`Invalid date string encountered: ${row.date}. Setting date to null.`);
+                        row.date = null;
+                      } else {
+                        row.date = parsedDate;
+                      }
+                    } catch (err) {
+                      console.warn(`Error parsing date string: ${row.date}. Setting date to null.`);
+                      row.date = null;
+                    }
+                  }
+                  // Fallback: construct date from year/month if needed
+                  if (!row.date && (row.order_year || row.year) && (row.order_month || row.month)) {
+                    try {
+                      row.date = new Date(
+                        parseInt(row.order_year || row.year),
+                        parseInt(row.order_month || row.month) - 1,
+                        1
+                      );
+                    } catch (err) {
+                      console.warn(`Error constructing date from year/month for row: ${JSON.stringify(row)}. Setting date to null.`);
+                      row.date = null;
+                    }
+                  }
+                  return row;
+                } catch (err) {
+                  console.error("Error processing row:", row, err);
+                  return null; // Skip malformed row
                 }
-              }
-              if (row.date && typeof row.date === 'string') {
-                const parsedDate = new Date(row.date);
-                if (isNaN(parsedDate.getTime())) {
-                  console.warn(`Invalid date string encountered: ${row.date}. Setting date to null.`);
-                  row.date = null;
-                } else {
-                  row.date = parsedDate;
-                }
-              }
-              if (!row.date && (row.order_year || row.year) && (row.order_month || row.month)) {
-                row.date = new Date(
-                  parseInt(row.order_year || row.year),
-                  parseInt(row.order_month || row.month) - 1,
-                  1
-                );
-              }
-              return row;
-            });
+              })
+              .filter(row => row !== null);
+          } catch (err) {
+            console.error("Error processing CSV data:", err);
+            return reject(err);
+          }
           resolve(processedData);
         },
         error: (error) => {

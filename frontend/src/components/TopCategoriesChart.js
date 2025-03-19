@@ -7,19 +7,22 @@ import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend } from 'recha
  * 
  * @param {Object} props Component props
  * @param {Array} props.categories Array of category names
- * @param {Object} props.categoryData Object with category data
+ * @param {Object} props.categoryData Object with category data, where each key corresponds to a category name and its value is an array of data rows.
  */
 const TopCategoriesChart = ({ categories, categoryData }) => {
-  // Calculate total demand for each category
+  // Calculate total demand for each category with robust error handling.
   const chartData = useMemo(() => {
-    // Ensure categories is a valid array and categoryData is provided
-    if (!Array.isArray(categories) || !categoryData) return [];
+    // Ensure categories is a valid array and categoryData is a non-null object.
+    if (!Array.isArray(categories) || typeof categoryData !== 'object' || categoryData === null) return [];
     
     return categories.map(category => {
-      // Ensure the category data is an array; otherwise, default to an empty array.
-      const categoryRows = Array.isArray(categoryData[category]) ? categoryData[category] : [];
+      // Use optional chaining to safely access category data.
+      const categoryRows = Array.isArray(categoryData?.[category]) ? categoryData[category] : [];
+      
+      // Sum up demand values (using parseFloat to ensure numeric addition)
       const totalDemand = categoryRows.reduce((sum, row) => {
-        return sum + (row.count || row.order_count || 0);
+        const count = parseFloat(row.count) || parseFloat(row.order_count) || 0;
+        return sum + count;
       }, 0);
       
       return {

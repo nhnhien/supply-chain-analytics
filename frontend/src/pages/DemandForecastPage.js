@@ -150,8 +150,8 @@ const ForecastInterpretation = ({ forecast }) => {
 };
 
 const DemandForecastPage = ({ data }) => {
-  // Centralized safe data defaults
-  const safeData = data || {}; 
+  // Memoize safeData so that it only updates when data changes
+  const safeData = useMemo(() => data || {}, [data]); 
 
   const [selectedCategory, setSelectedCategory] = useState('');
   const [forecastData, setForecastData] = useState([]);
@@ -159,7 +159,7 @@ const DemandForecastPage = ({ data }) => {
   const [hasVisualizationData, setHasVisualizationData] = useState(false);
   const [isInitialized, setIsInitialized] = useState(false);
 
-  // Memoize valid forecast report and performance metrics
+  // Memoize valid forecast report
   const validForecastReport = useMemo(() => {
     const forecastReport = safeData.forecastReport || [];
     return getValidArray(forecastReport);
@@ -296,7 +296,7 @@ const DemandForecastPage = ({ data }) => {
 
   useEffect(() => {
     processForecastData();
-  }, [selectedCategory, safeData, validForecastReport]);
+  }, [selectedCategory, safeData, validForecastReport]); // Dependencies updated
 
   const handleCategoryChange = (event) => {
     setSelectedCategory(event.target.value);
@@ -484,8 +484,8 @@ const DemandForecastPage = ({ data }) => {
             <Typography component="h2" variant="h6" color="primary" gutterBottom>
               Forecast Statistics
             </Typography>
-            {getValidArray(getCurrentCategoryForecast()).map(forecast => (
-              <Box key={forecast.category} sx={{ mb: 2 }}>
+            {getValidArray(getCurrentCategoryForecast()).map((forecast, index) => (
+              <Box key={`${forecast.category}-${index}`} sx={{ mb: 2 }}>
                 {/* Render forecast detail cards (omitted for brevity) */}
               </Box>
             ))}

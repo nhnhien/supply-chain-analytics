@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useMemo } from 'react';
 import { 
   Grid, Paper, Typography, Box, Card, CardContent, 
   FormControl, InputLabel, Select, MenuItem, Alert, AlertTitle, List, ListItem, ListItemText, Avatar, Tooltip 
@@ -19,15 +19,6 @@ import KPICard from '../components/KPICard';
 import TopCategoriesChart from '../components/TopCategoriesChart';
 import SellerPerformanceChart from '../components/SellerPerformanceChart';
 
-// Placeholder component for Monthly Profit Chart
-const MonthlyProfitChart = ({ data }) => {
-  useEffect(() => {
-    console.log("MonthlyProfitChart useEffect triggered");
-  }, []);
-  
-  return <div>Monthly Profit Chart Placeholder</div>;
-};
-
 const DashboardPage = ({ data }) => {
   if (!data) {
     return <Typography>No dashboard data available</Typography>;
@@ -43,7 +34,7 @@ const DashboardPage = ({ data }) => {
     recommendations = { inventory: [] } 
   } = data;
   
-  // Ensure kpis object exists
+  // If kpis is missing, show a fallback message
   if (!kpis) {
     return <Typography>No KPI data available</Typography>;
   }
@@ -285,10 +276,6 @@ const DashboardPage = ({ data }) => {
           </Paper>
         </Grid>
       </Grid>
-      
-      {/* Monthly Profit Chart Placeholder */}
-      <MonthlyProfitChart data={[]} />
-      
     </Box>
   );
 };

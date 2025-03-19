@@ -113,9 +113,16 @@ function App() {
     );
   }
 
-  // Create safe empty objects for each data section to prevent null reference errors
-  const safeData = dashboardData || {};
-  const safeForecasts = safeData.forecasts || {};
+  // Create safe default objects that match the expected structure in child components
+  const safeData = dashboardData || {
+    forecasts: { forecastReport: [], performanceMetrics: [] },
+    categories: { topCategories: [], categoryData: {} },
+    sellerPerformance: { clusters: [] },
+    geography: { stateMetrics: [] },
+    recommendations: { inventory: [] },
+    performance: []
+  };
+  const safeForecasts = safeData.forecasts || { forecastReport: [], performanceMetrics: [] };
   const safeCategories = safeData.categories || { topCategories: [], categoryData: {} };
   const safeSellerPerformance = safeData.sellerPerformance || { clusters: [] };
   const safeGeography = safeData.geography || { stateMetrics: [] };

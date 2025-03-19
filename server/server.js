@@ -14,13 +14,14 @@ const OUTPUT_DIR = process.env.OUTPUT_DIR || path.join(__dirname, '../output');
 const { MongoClient, ObjectId } = require('mongodb');
 
 // MongoDB connection string from environment variable or use default
-const MONGODB_URI = process.env.MONGODB_URI
+const MONGODB_URI = process.env.MONGODB_URI;
 const DB_NAME = process.env.DB_NAME || 'supply_chain_analytics';
 
-// MongoDB connection
 let mongoClient;
 let db;
+let mongoAvailable = false;
 
+// Async function to connect to MongoDB
 async function connectToMongoDB() {
   try {
     mongoClient = new MongoClient(MONGODB_URI);
@@ -34,18 +35,25 @@ async function connectToMongoDB() {
   }
 }
 
-// Initialize MongoDB connection on server start
-let mongoAvailable = false;
-connectToMongoDB()
-  .then(result => {
-    mongoAvailable = result;
-  })
-  .catch(err => {
-    console.error('Failed to initialize MongoDB connection:', err);
-    mongoAvailable = false;
-  });
+// Initialize MongoDB connection before starting the server.
+async function initMongo() {
+  mongoAvailable = await connectToMongoDB();
+  if (!mongoAvailable) {
+    console.error("MongoDB is not available. Frontend requests that rely on MongoDB may not function properly.");
+  }
+}
 
-  
+initMongo().then(() => {
+  app.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+  });
+});
+
+// Expose mongoAvailable status via an API endpoint
+app.get('/api/mongo-status', (req, res) => {
+  res.json({ mongoAvailable });
+});
+
 // Middleware
 app.use(cors());
 app.use(express.json());
@@ -82,7 +90,6 @@ app.post('/api/run-analysis', (req, res) => {
     return res.json({ success: true, message: 'Analysis completed successfully' });
   });
 });
-
 
 // API endpoint to get list of available data files
 app.get('/api/data-files', (req, res) => {
@@ -195,8 +202,6 @@ app.get('/api/dashboard-data', (req, res) => {
         
         try {
           const records = parse(data, { columns: true, skip_empty_lines: true });
-          
-          // Check if we have valid data (at least some rows)
           if (!records || records.length === 0) {
             console.warn(`Warning: ${key} file contains no data records`);
           }
@@ -205,18 +210,15 @@ app.get('/api/dashboard-data', (req, res) => {
         } catch (parseError) {
           console.error(`Error parsing ${key} CSV: ${parseError}`);
           
-          // Determine if this is a critical file
           const isCritical = ['monthlyDemand', 'forecastReport'].includes(key);
           
           if (isCritical) {
-            // For critical files, reject with error details
             reject({ 
               key, 
               error: `Failed to parse critical file: ${parseError.message}`, 
               type: 'parse_error_critical' 
             });
           } else {
-            // For non-critical files, resolve with error status but empty data
             resolve({ 
               key, 
               data: [], 
@@ -231,14 +233,12 @@ app.get('/api/dashboard-data', (req, res) => {
   
   Promise.all(filePromises)
     .then(results => {
-      // Process results and track any parsing errors
       const data = {};
       const dataWarnings = [];
       
       results.forEach(result => {
         data[result.key] = result.data;
         
-        // If there was a parse error for non-critical files, track it
         if (result.status === 'parse_error') {
           dataWarnings.push({
             dataType: result.key,
@@ -247,11 +247,9 @@ app.get('/api/dashboard-data', (req, res) => {
         }
       });
       
-      // Helper functions defined inline for dashboard processing.
       function processDemandData(data) {
         return data.map(row => {
           if (!row) return null;
-          // Normalize date: use row.date if valid; otherwise try year/month fields.
           if (!row.date) {
             const year = row.order_year || row.year;
             const month = row.order_month || row.month;
@@ -277,7 +275,6 @@ app.get('/api/dashboard-data', (req, res) => {
               row.date = parsedDate;
             }
           }
-          // Ensure count exists; fallback to order_count or 0.
           if (!row.count && row.order_count) {
             row.count = row.order_count;
           }
@@ -434,7 +431,6 @@ app.get('/api/dashboard-data', (req, res) => {
         dashboardData.geography = { stateMetrics: data.stateMetrics };
       }
       
-      // If there were any data warnings, include them in the response
       if (dataWarnings.length > 0) {
         dashboardData.dataWarnings = dataWarnings;
       }
@@ -443,8 +439,6 @@ app.get('/api/dashboard-data', (req, res) => {
     })
     .catch(error => {
       console.error('Error processing dashboard data:', error);
-      
-      // Provide a meaningful error to the client
       if (error.type && error.key) {
         return res.status(500).json({
           error: `Data processing failed: ${error.error}`,
@@ -455,9 +449,4 @@ app.get('/api/dashboard-data', (req, res) => {
         return res.status(500).json({ error: 'Failed to process dashboard data' });
       }
     });
-});
-
-// Start the server
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
 });

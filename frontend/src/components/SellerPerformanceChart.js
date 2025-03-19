@@ -80,13 +80,12 @@ const SellerPerformanceChart = ({ sellerData }) => {
     if (allZ.length === 0) return [50, 400];
     const dataMin = Math.min(...allZ);
     const dataMax = Math.max(...allZ);
-    if (dataMin === dataMax) return [50, 50]; // Uniform values: fixed bubble size
-    // Use a linear mapping so that the minimum bubble size is 50 pixels.
-    // We compute a scale factor such that: scale = (desiredMax - 50) / (dataMax - dataMin)
-    // Then set dynamic max size = 50 + (dataMax - dataMin) * scale.
+    const epsilon = 1e-6;
+    const delta = dataMax - dataMin;
+    if (delta < epsilon) return [50, 50]; // If the range is extremely small, use a fixed bubble size
     const desiredMaxSize = 400;
-    const scale = (desiredMaxSize - 50) / (dataMax - dataMin);
-    const dynamicMax = 50 + (dataMax - dataMin) * scale;
+    const scale = (desiredMaxSize - 50) / delta;
+    const dynamicMax = 50 + delta * scale;
     return [50, dynamicMax];
   }, [processedData]);
   

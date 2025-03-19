@@ -35,18 +35,7 @@ except ImportError:
 
 
 def calculate_delivery_days(orders, supply_chain=None):
-    """
-    Calculate delivery days based on timestamp data.
-    
-    Args:
-        orders: DataFrame containing order data.
-        supply_chain: Optional unified supply chain DataFrame for category/state-based estimations.
-    
-    Returns:
-        Updated orders DataFrame with delivery_days calculated.
-    """
     if 'delivery_days' in orders.columns and not orders['delivery_days'].isna().all():
-        # Assume delivery_days already calculated
         pass
     else:
         orders['order_purchase_timestamp'] = pd.to_datetime(orders['order_purchase_timestamp'])
@@ -109,10 +98,7 @@ def calculate_delivery_days(orders, supply_chain=None):
     return orders
 
 
-
-
 def parse_arguments():
-    """Parse command line arguments"""
     parser = argparse.ArgumentParser(description='Supply Chain Analytics for Demand Forecasting')
     parser.add_argument('--data-dir', type=str, default='.', help='Directory containing data files')
     parser.add_argument('--output-dir', type=str, default='./output', help='Directory to save output files')
@@ -124,26 +110,16 @@ def parse_arguments():
     parser.add_argument('--use-mongodb', action='store_true', help='Store results in MongoDB')
     parser.add_argument('--mongodb-uri', type=str, default='mongodb://localhost:27017/', help='MongoDB connection URI')
     parser.add_argument('--mongodb-db', type=str, default='supply_chain_analytics', help='MongoDB database name')
-    
     return parser.parse_args()
 
+
 def ensure_directory(directory):
-    """Ensure a directory exists."""
     if not os.path.exists(directory):
         os.makedirs(directory)
         print(f"Created directory: {directory}")
 
+
 def get_top_categories(data, limit=15):
-    """
-    Get top categories by total demand.
-    
-    Args:
-        data: Monthly demand DataFrame.
-        limit: Maximum number of categories to return.
-    
-    Returns:
-        List of top category names.
-    """
     category_totals = {}
     for _, row in data.iterrows():
         category = row.get('product_category_name')
@@ -153,16 +129,8 @@ def get_top_categories(data, limit=15):
     top = sorted(category_totals.items(), key=lambda item: item[1], reverse=True)[:limit]
     return [cat for cat, _ in top]
 
+
 def run_pandas_analysis(args):
-    """
-    Run supply chain analysis using pandas.
-    
-    Args:
-        args: Command line arguments.
-    
-    Returns:
-        Dictionary of analysis results.
-    """
     print("Running analysis with pandas...")
     
     print("Loading data...")
@@ -174,7 +142,7 @@ def run_pandas_analysis(args):
     
     ensure_directory(args.output_dir)
     
-    print("Preprocessing data...")
+    print("Preprocessing data...");
     orders, delivery_metrics = preprocess_order_data(orders, args.output_dir)
     products = preprocess_product_data(products, args.output_dir)
     order_items = preprocess_order_items(order_items, args.output_dir)
@@ -192,29 +160,20 @@ def run_pandas_analysis(args):
     supply_chain = supply_chain.merge(products, on='product_id', how='left')
     supply_chain = supply_chain.merge(customers, on='customer_id', how='left')
     
-    print("Analyzing monthly demand patterns...")
-
-    # Group by product category, year, and month, and count records
+    print("Analyzing monthly demand patterns...");
     monthly_demand = (supply_chain.groupby(['product_category_name', 'order_year', 'order_month'])
                     .size().reset_index(name='count'))
-
-    # Ensure order_year and order_month are valid integers; use defaults if missing
+    
     monthly_demand['order_year'] = pd.to_numeric(monthly_demand['order_year'], errors='coerce').fillna(1970).astype(int)
     monthly_demand['order_month'] = pd.to_numeric(monthly_demand['order_month'], errors='coerce').fillna(1).astype(int)
-
-    # Create a date string and convert it to a datetime object, coercing errors to NaT
+    
     monthly_demand['date'] = pd.to_datetime(
         monthly_demand['order_year'].astype(str) + '-' + 
         monthly_demand['order_month'].astype(str).str.zfill(2) + '-01',
         errors='coerce'
     )
-
-    # Fill any NaT values with a default date
     monthly_demand['date'] = monthly_demand['date'].fillna(pd.Timestamp('1970-01-01'))
-
-    # Save the processed monthly demand data to CSV
     monthly_demand.to_csv(os.path.join(args.output_dir, 'monthly_demand.csv'), index=False)
-
     
     top_categories = get_top_categories(monthly_demand, args.top_n)
     print(f"Top {len(top_categories)} categories by volume: {', '.join(top_categories)}")
@@ -236,6 +195,17 @@ def run_pandas_analysis(args):
     forecasts = forecaster.run_all_forecasts(top_n=args.top_n, periods=args.forecast_periods)
     
     forecast_report = forecaster.generate_forecast_report(os.path.join(args.output_dir, 'forecast_report.csv'))
+    
+    # NEW: Generate forecast visualization to ensure forecasts are properly visualized
+    print("Generating forecast visualization...");
+    visualizer = SupplyChainVisualizer(output_dir=args.output_dir)
+    try:
+        if hasattr(visualizer, 'visualize_forecasts'):
+            visualizer.visualize_forecasts(forecast_report)
+        else:
+            print("Warning: 'visualize_forecasts' method not implemented in SupplyChainVisualizer.")
+    except Exception as e:
+        print(f"Error generating forecast visualization: {e}")
     
     print("Analyzing seller performance...");
     seller_performance = (supply_chain.groupby('seller_id')
@@ -262,12 +232,9 @@ def run_pandas_analysis(args):
         (seller_performance['on_time_delivery_rate'] / 100) * 25
     )
     
-    # Perform clustering on seller performance using a quantile-based approach.
     seller_performance = seller_performance.copy()
-    # Use qcut to divide sellers into 3 clusters: 0 (High), 1 (Medium), 2 (Low)
     seller_performance['prediction'] = pd.qcut(seller_performance['seller_score'], q=3, labels=[0, 1, 2]).astype(int)
     
-    # Save seller performance clusters to CSV.
     seller_clusters_file = os.path.join(args.output_dir, 'seller_clusters.csv')
     seller_performance.to_csv(seller_clusters_file, index=False)
     print(f"Seller clusters saved to {seller_clusters_file}");
@@ -316,7 +283,6 @@ def run_pandas_analysis(args):
             safety_stock = z_score * cat_std * np.sqrt(lead_time_fraction)
             safety_stock = max(safety_stock, 0.3 * cat_demand)
             reorder_point = (cat_demand * lead_time_fraction) + safety_stock
-            # Use list indexing instead of .iloc[0] since forecasts[category] is a list
             next_month_forecast = forecasts[category]['forecast'].iloc[0] if len(forecasts[category]) > 0 else cat_demand
             growth_rate = ((next_month_forecast - cat_demand) / cat_demand * 100) if cat_demand > 0 else 0
             annual_demand = cat_demand * 12
@@ -344,16 +310,8 @@ def run_pandas_analysis(args):
             })
     recommendations_df = pd.DataFrame(recommendations)
     recommendations_df.to_csv(os.path.join(args.output_dir, 'reorder_recommendations.csv'), index=False)
-
     
     print("Creating visualizations...");
-    visualizer = SupplyChainVisualizer(output_dir=args.output_dir)
-    
-    monthly_demand['date'] = pd.to_datetime(
-        monthly_demand['order_year'].astype(str) + '-' + 
-        monthly_demand['order_month'].astype(str).str.zfill(2) + '-01'
-    )
-    
     visualizer.visualize_demand_trends(monthly_demand, top_categories[:10])
     for category in top_categories[:5]:
         visualizer.create_demand_heatmap(monthly_demand, category)
@@ -397,32 +355,15 @@ def run_pandas_analysis(args):
         'performance_metrics': performance_metrics
     }
 
+
 def store_results_in_mongodb(results, args):
-    """
-    Store analysis results in MongoDB.
-    
-    Args:
-        results: Dictionary of analysis results
-        args: Command line arguments
-        
-    Returns:
-        run_id: Analysis run ID
-    """
     try:
         from mongodb_storage import MongoDBStorage
-        
-        # Get MongoDB connection string from environment or use default
         import os
         connection_string = os.environ.get('MONGODB_URI', 'mongodb://localhost:27017/')
-        
-        # Initialize MongoDB storage
         storage = MongoDBStorage(connection_string)
-        
-        # Generate a run ID
         from datetime import datetime
         run_id = datetime.now().strftime("%Y%m%d%H%M%S")
-        
-        # Store analysis metadata
         metadata = {
             'run_id': run_id,
             'timestamp': datetime.now(),
@@ -441,14 +382,9 @@ def store_results_in_mongodb(results, args):
             }
         }
         storage.store_analysis_metadata(metadata)
-        
-        # Store monthly demand data
         if 'monthly_demand' in results:
             storage.store_monthly_demand(results['monthly_demand'], run_id)
-        
-        # Store forecasts
         if 'forecasts' in results:
-            # Convert forecasts dictionary to DataFrame
             import pandas as pd
             forecasts_list = []
             for category, forecast_df in results['forecasts'].items():
@@ -456,33 +392,21 @@ def store_results_in_mongodb(results, args):
                     'category': category,
                     'forecast_values': forecast_df['forecast'].tolist() if hasattr(forecast_df, 'tolist') else forecast_df['forecast'].values.tolist()
                 }
-                
-                # Add confidence intervals if available
                 if 'lower_ci' in forecast_df.columns and 'upper_ci' in forecast_df.columns:
                     forecast_record['lower_ci'] = forecast_df['lower_ci'].tolist() if hasattr(forecast_df['lower_ci'], 'tolist') else forecast_df['lower_ci'].values.tolist()
                     forecast_record['upper_ci'] = forecast_df['upper_ci'].tolist() if hasattr(forecast_df['upper_ci'], 'tolist') else forecast_df['upper_ci'].values.tolist()
-                
-                # Add growth rate if available in a separate mapping
                 if category in results.get('growth_rates', {}):
                     forecast_record['growth_rate'] = results['growth_rates'][category]
-                
                 forecasts_list.append(forecast_record)
-            
             forecasts_df = pd.DataFrame(forecasts_list)
             storage.store_forecasts(forecasts_df, run_id)
-        
-        # Store seller performance clusters
         if 'seller_performance' in results:
             storage.store_supplier_clusters(results['seller_performance'], run_id)
-        
-        # Store inventory recommendations
         if 'recommendations' in results:
             storage.store_inventory_recommendations(results['recommendations'], run_id)
-        
         storage.close()
         print(f"Analysis results stored in MongoDB with run_id: {run_id}")
         return run_id
-        
     except ImportError:
         print("Warning: MongoDB integration not available. Install pymongo to enable MongoDB storage.")
         return None
@@ -490,17 +414,16 @@ def store_results_in_mongodb(results, args):
         print(f"Error storing results in MongoDB: {e}")
         return None
 
+
 def main():
     args = parse_arguments()
     warnings.filterwarnings("ignore")
     ensure_directory(args.output_dir)
     results = run_pandas_analysis(args)
 
-    # Store results in MongoDB if requested
     if args.use_mongodb and MONGODB_AVAILABLE:
         run_id = store_results_in_mongodb(results, args)
         if run_id:
-            # Add run_id to summary report
             with open(os.path.join(args.output_dir, 'summary_report.md'), 'a') as f:
                 f.write(f"\n\n## MongoDB Storage\n\nResults stored in MongoDB with run_id: {run_id}\n")
 
@@ -552,16 +475,21 @@ def main():
     seller_clusters = results['seller_performance'].groupby('prediction').size().reset_index()
     seller_clusters.columns = ['cluster', 'count']
     total_sellers = seller_clusters['count'].sum()
-    for _, row in seller_clusters.iterrows():
+    for idx, row in seller_clusters.iterrows():
         cluster_num = row['cluster']
         cluster_size = row['count']
         percentage = (cluster_size / total_sellers) * 100
-        cluster_label = "High Performers" if cluster_num == 0 else "Medium Performers" if cluster_num == 1 else "Low Performers"
+        if cluster_num == 0:
+            cluster_label = 'High Performers'
+        elif cluster_num == 1:
+            cluster_label = 'Medium Performers'
+        else:
+            cluster_label = 'Low Performers'
         report.append(f"- {cluster_label}: {cluster_size} sellers ({percentage:.1f}%)")
     report.append("")
     
-    report.append("### Visualization Files")
-    output_files = [f for f in os.listdir(args.output_dir) if f.endswith('.png') or f.endswith('.csv')]
+    report.append("#### Visualization Files")
+    output_files = [f for f in os.listdir(args.output_dir) if f.endswith('.png') or f.endswith('.csv') or f.endswith('.md')]
     for f in output_files[:15]:
         report.append(f"- {f}")
     
@@ -569,8 +497,6 @@ def main():
         f.write('\n'.join(report))
     
     print(f"Summary report saved to {os.path.join(args.output_dir, 'summary_report.md')}")
-
-
-
+    
 if __name__ == "__main__":
     main()
