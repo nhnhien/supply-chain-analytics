@@ -54,7 +54,7 @@ class DemandForecaster:
                 count_column = numeric_cols[0]
         return count_column
 
-    def preprocess_data(self):
+    def preprocess_forecast_data(self):
         """Preprocess data for time series analysis with enhanced date handling."""
         if 'year' not in self.data.columns or 'month' not in self.data.columns:
             date_columns = [col for col in self.data.columns if 'timestamp' in col.lower() or 'date' in col.lower()]
@@ -247,84 +247,199 @@ class DemandForecaster:
         except Exception as e:
             print(f"plot_acf_pacf error for {category}: {e}")
             plt.close()
+    def _detect_seasonality(self, ts):
+        """
+        Automatically detect seasonality in time series data.
+        
+        Returns:
+            tuple: (is_seasonal, period) where is_seasonal is a boolean and period is the seasonality period
+        """
+        if len(ts) < 24:  # Need at least 2 years of data for reliable seasonality detection
+            return False, self.seasonal_period
+            
+        try:
+            # Calculate autocorrelation at different lags
+            acf_values = pd.Series(pd.Series(ts).autocorr(lag=i) for i in range(1, min(37, len(ts) // 2)))
+            
+            # Check for peaks in autocorrelation
+            peaks = []
+            for i in range(2, len(acf_values) - 2):
+                if (acf_values[i] > acf_values[i-1] and 
+                    acf_values[i] > acf_values[i-2] and 
+                    acf_values[i] > acf_values[i+1] and 
+                    acf_values[i] > acf_values[i+2] and
+                    acf_values[i] > 0.3):  # Significant correlation
+                    peaks.append((i+1, acf_values[i]))
+            
+            if not peaks:
+                return False, self.seasonal_period
+                
+            # Find the most significant peak
+            peaks.sort(key=lambda x: x[1], reverse=True)
+            best_period = peaks[0][0]
+            
+            # Check common seasonality periods
+            if 11 <= best_period <= 13:  # Monthly
+                return True, 12
+            elif 3 <= best_period <= 4:  # Quarterly
+                return True, 4
+            elif best_period == 7:  # Weekly
+                return True, 7
+            elif 51 <= best_period <= 53:  # Yearly for weekly data
+                return True, 52
+            else:
+                return True, best_period
+        except Exception as e:
+            print(f"Error detecting seasonality: {e}")
+            return self.seasonal, self.seasonal_period
 
-    def find_best_parameters(self, category, max_p=3, max_d=2, max_q=3):
-        if category not in self.category_data:
-            print(f"Category '{category}' not found")
-            return (1, 1, 1)
-        col = self._get_count_column(category)
-        if not col:
-            print(f"No suitable numeric column found for {category}")
-            return (1, 1, 1)
-        ts = self.category_data[category][col]
-        if len(ts) < 6:
-            print(f"Insufficient data for {category} to find optimal parameters, using default")
-            return (1, 1, 1)
-        if self.use_auto_arima:
-            try:
-                print(f"Using auto_arima for {category}")
-                seasonal = self.seasonal and (len(ts) >= (2 * self.seasonal_period))
-                if seasonal:
-                    model = pm.auto_arima(
-                        ts,
-                        start_p=0, max_p=max_p,
-                        start_q=0, max_q=max_q,
-                        start_P=0, max_P=1,
-                        start_Q=0, max_Q=1,
-                        d=None, max_d=max_d, D=None, max_D=1,
-                        seasonal=True, m=self.seasonal_period,
-                        information_criterion='aic',
-                        trace=False,
-                        error_action='ignore',
-                        suppress_warnings=True,
-                        stepwise=True
-                    )
-                    order = model.order
-                    seasonal_order = model.seasonal_order
-                    params = (order[0], order[1], order[2], seasonal_order[0], seasonal_order[1], seasonal_order[2], seasonal_order[3])
-                    print(f"Best SARIMA parameters for {category}: SARIMA{order}x{seasonal_order} (AIC: {model.aic():.2f})")
+    def _remove_outliers(self, ts):
+        """
+        Remove outliers from time series data using IQR method.
+        
+        Args:
+            ts: Time series data
+            
+        Returns:
+            pd.Series: Time series with outliers replaced with median of nearby values
+        """
+        if len(ts) < 4:
+            return ts
+            
+        ts_cleaned = ts.copy()
+        
+        # Calculate IQR
+        q1 = ts.quantile(0.25)
+        q3 = ts.quantile(0.75)
+        iqr = q3 - q1
+        
+        # Define bounds
+        lower_bound = q1 - 1.5 * iqr
+        upper_bound = q3 + 1.5 * iqr
+        
+        # Identify outliers
+        outliers_idx = (ts < lower_bound) | (ts > upper_bound)
+        
+        if outliers_idx.sum() > 0:
+            print(f"Detected {outliers_idx.sum()} outliers out of {len(ts)} points")
+            
+            # Replace outliers with median of nearby values (5-point window)
+            for idx in outliers_idx[outliers_idx].index:
+                i = ts.index.get_loc(idx)
+                
+                # Get window around the outlier (respecting boundaries)
+                start = max(0, i - 2)
+                end = min(len(ts), i + 3)
+                window = ts.iloc[start:end]
+                
+                # Remove outliers from the window itself
+                window = window[(window >= lower_bound) & (window <= upper_bound)]
+                
+                if len(window) > 0:
+                    # Replace with median of non-outlier values in window
+                    ts_cleaned.loc[idx] = window.median()
                 else:
-                    model = pm.auto_arima(
-                        ts,
-                        start_p=0, max_p=max_p,
-                        start_q=0, max_q=max_q,
-                        d=None, max_d=max_d,
-                        seasonal=False,
-                        information_criterion='aic',
-                        trace=False,
-                        error_action='ignore',
-                        suppress_warnings=True,
-                        stepwise=True
-                    )
-                    params = model.order
-                    print(f"Best ARIMA parameters for {category}: {params} (AIC: {model.aic():.2f})")
-                self.best_params[category] = params
-                return params
-            except Exception as e:
-                print(f"Error in auto_arima for {category}: {e}")
-                print("Falling back to grid search")
-        best_aic = float('inf')
-        best_params = None
-        for p in range(max_p + 1):
-            for d in range(max_d + 1):
-                for q in range(max_q + 1):
-                    if p == 0 and q == 0:
-                        continue
-                    try:
-                        model = ARIMA(ts, order=(p, d, q))
-                        results = model.fit()
-                        aic = results.aic
-                        if aic < best_aic:
-                            best_aic = aic
-                            best_params = (p, d, q)
-                    except Exception:
-                        continue
-        if best_params is None:
-            print(f"Could not find optimal parameters for {category}, using default")
-            best_params = (1, 1, 1)
-        print(f"Best ARIMA parameters for {category}: {best_params} (AIC: {best_aic:.2f})")
-        self.best_params[category] = best_params
-        return best_params
+                    # If all values in window are outliers, use global median
+                    ts_cleaned.loc[idx] = ts[(ts >= lower_bound) & (ts <= upper_bound)].median()
+        
+        return ts_cleaned
+    def find_best_parameters(self, category, max_p=3, max_d=2, max_q=3):
+        try:
+            if category not in self.category_data:
+                print(f"Category '{category}' not found")
+                return (1, 1, 1)
+            col = self._get_count_column(category)
+            if not col:
+                print(f"No suitable numeric column found for {category}")
+                return (1, 1, 1)
+            ts = self.category_data[category][col]
+            if len(ts) < 6:
+                print(f"Insufficient data for {category} to find optimal parameters, using default")
+                return (1, 1, 1)
+                
+            # Detect seasonality automatically
+            auto_seasonal, auto_period = self._detect_seasonality(ts)
+            use_seasonal = self.seasonal or auto_seasonal
+            period = auto_period if auto_seasonal else self.seasonal_period
+            
+            # Remove outliers before model fitting
+            ts_cleaned = self._remove_outliers(ts)
+            
+            if self.use_auto_arima:
+                try:
+                    print(f"Using auto_arima for {category}")
+                    # Check if we have enough data for seasonal model
+                    seasonal = use_seasonal and (len(ts_cleaned) >= (2 * period))
+                    if seasonal:
+                        print(f"Using seasonal model with period {period}")
+                        model = pm.auto_arima(
+                            ts_cleaned,
+                            start_p=0, max_p=max_p,
+                            start_q=0, max_q=max_q,
+                            start_P=0, max_P=1,
+                            start_Q=0, max_Q=1,
+                            d=None, max_d=max_d, D=None, max_D=1,
+                            seasonal=True, m=period,
+                            information_criterion='aic',
+                            trace=False,
+                            error_action='ignore',
+                            suppress_warnings=True,
+                            stepwise=True
+                        )
+                        order = model.order
+                        seasonal_order = model.seasonal_order
+                        params = (order[0], order[1], order[2], seasonal_order[0], seasonal_order[1], seasonal_order[2], seasonal_order[3])
+                        print(f"Best SARIMA parameters for {category}: SARIMA{order}x{seasonal_order} (AIC: {model.aic():.2f})")
+                    else:
+                        model = pm.auto_arima(
+                            ts_cleaned,
+                            start_p=0, max_p=max_p,
+                            start_q=0, max_q=max_q,
+                            d=None, max_d=max_d,
+                            seasonal=False,
+                            information_criterion='aic',
+                            trace=False,
+                            error_action='ignore',
+                            suppress_warnings=True,
+                            stepwise=True
+                        )
+                        params = model.order
+                        print(f"Best ARIMA parameters for {category}: {params} (AIC: {model.aic():.2f})")
+                    self.best_params[category] = params
+                    return params
+                except Exception as e:
+                    print(f"Error in auto_arima for {category}: {e}")
+                    print("Falling back to grid search")
+            
+            # Grid search fallback
+            best_aic = float('inf')
+            best_params = None
+            for p in range(max_p + 1):
+                for d in range(max_d + 1):
+                    for q in range(max_q + 1):
+                        if p == 0 and q == 0:
+                            continue
+                        try:
+                            model = ARIMA(ts_cleaned, order=(p, d, q))
+                            results = model.fit()
+                            aic = results.aic
+                            if aic < best_aic:
+                                best_aic = aic
+                                best_params = (p, d, q)
+                        except Exception:
+                            continue
+            
+            if best_params is None:
+                print(f"Could not find optimal parameters for {category}, using default")
+                best_params = (1, 1, 1)
+            else:
+                print(f"Best ARIMA parameters for {category}: {best_params} (AIC: {best_aic:.2f})")
+            
+            self.best_params[category] = best_params
+            return best_params
+        except Exception as e:
+            print(f"Error finding parameters for {category}: {e}")
+            return (1, 1, 1)  # Safe default
 
     def calculate_consistent_growth_rate(self, category):
         col = self._get_count_column(category)
@@ -392,6 +507,9 @@ class DemandForecaster:
                 
         ts = self.category_data[category][count_column]
         
+        # Remove outliers before modeling
+        ts_cleaned = self._remove_outliers(ts)
+        
         # Prepare historical data for visualization
         historical_data = []
         for date, value in zip(ts.index, ts.values):
@@ -402,7 +520,7 @@ class DemandForecaster:
             })
         
         # Check if we have enough data for forecasting (at least 4 data points)
-        if len(ts) < 4:
+        if len(ts_cleaned) < 4:
             print(f"Insufficient data points for {category}, need at least 4 data points")
             result = self._create_empty_forecast_results(category, ts)
             result['visualization_data'] = historical_data
@@ -417,12 +535,22 @@ class DemandForecaster:
         else:
             params = (1, 1, 1)
         
+        # Handle None params
+        if params is None:
+            print(f"Warning: No valid parameters found for {category}, using default (1,1,1)")
+            params = (1, 1, 1)
+        
+        # Detect seasonality
+        auto_seasonal, auto_period = self._detect_seasonality(ts_cleaned)
+        use_seasonal = self.seasonal or auto_seasonal
+        period = auto_period if auto_seasonal else self.seasonal_period
+        
         # Determine if using seasonal model (SARIMA)
-        is_seasonal = self.seasonal and len(params) > 3 and params[6] > 1
+        is_seasonal = use_seasonal and len(params) > 3 and params[6] > 1
             
         if is_seasonal:
             p, d, q, P, D, Q, s = params
-            if len(ts) < (4 + d + D * s):
+            if len(ts_cleaned) < (4 + d + D * s):
                 print(f"Insufficient data for SARIMA with parameters {params}, reducing to simple ARIMA")
                 params = (p, d, q)
                 is_seasonal = False
@@ -430,19 +558,20 @@ class DemandForecaster:
             if len(params) > 3:
                 p, d, q = params[:3]
                 params = (p, d, q)
-            if params[1] > 1 and len(ts) < (3 + params[1]):
+            if params[1] > 1 and len(ts_cleaned) < (3 + params[1]):
                 print(f"Insufficient data for differencing with d={params[1]}, reducing d parameter")
                 p, _, q = params
                 params = (p, 1, q)
         
         # Train-test split for validation (80-20 split)
-        train_size = max(int(len(ts) * 0.8), 3)
-        test_size = len(ts) - train_size
+        train_size = max(int(len(ts_cleaned) * 0.8), 3)
+        test_size = len(ts_cleaned) - train_size
         
         mae, rmse, mape_val = None, None, None
+        use_alternative_model = False
         
         if test_size > 0:
-            train, test = ts[:train_size], ts[train_size:]
+            train, test = ts_cleaned[:train_size], ts_cleaned[train_size:]
             
             try:
                 if is_seasonal:
@@ -464,36 +593,113 @@ class DemandForecaster:
                     mae = mean_absolute_error(test_values, forecast_values)
                     rmse = np.sqrt(mean_squared_error(test_values, forecast_values))
                     mape_val = self.calculate_robust_mape(test_values, forecast_values)
+                    
+                    # If MAPE is very high (> 50%), try alternative model
+                    if mape_val is not None and mape_val > 50:
+                        print(f"ARIMA model has high MAPE ({mape_val:.2f}%), trying alternative approach")
+                        use_alternative_model = True
                 else:
                     print(f"Warning: Length mismatch between test and forecast for {category}")
                     mae = rmse = mape_val = None
             except Exception as e:
                 print(f"Error in model validation for {category}: {e}")
+                use_alternative_model = True
         else:
             print(f"Warning: Insufficient data for validation split for {category}, proceeding with full data training")
         
         self.performance[category] = {'mae': mae, 'rmse': rmse, 'mape': mape_val}
         
+        # Try LSTM if ARIMA failed or had high error
+        if use_alternative_model:
+            print(f"Using alternative model (LSTM) for {category}")
+            try:
+                lstm_forecasts = self._lstm_forecast(ts_cleaned, periods=periods)
+                
+                if isinstance(ts_cleaned.index[-1], pd.Timestamp):
+                    last_date = ts_cleaned.index[-1]
+                    forecast_index = pd.date_range(start=last_date, periods=periods+1, freq='MS')[1:]
+                else:
+                    try:
+                        last_idx = int(ts_cleaned.index[-1])
+                        forecast_index = range(last_idx + 1, last_idx + periods + 1)
+                    except Exception:
+                        forecast_index = range(periods)
+                        
+                forecast_df = pd.DataFrame({'forecast': lstm_forecasts}, index=forecast_index)
+                
+                historical_std = ts_cleaned.std()
+                if pd.isna(historical_std) or historical_std <= 0:
+                    historical_std = ts_cleaned.mean() * 0.2 if ts_cleaned.mean() > 0 else 5
+                
+                forecast_df['lower_ci'] = np.maximum(lstm_forecasts - 1.96 * historical_std, 0)
+                forecast_df['upper_ci'] = lstm_forecasts + 1.96 * historical_std
+                
+                self.forecasts[category] = forecast_df
+                growth_rate = self.calculate_consistent_growth_rate(category)
+                
+                forecast_viz_data = []
+                for date, value, lower, upper in zip(forecast_index, lstm_forecasts, 
+                                                    forecast_df['lower_ci'], forecast_df['upper_ci']):
+                    forecast_viz_data.append({
+                        'date': date,
+                        'value': float(value),
+                        'lowerBound': float(lower),
+                        'upperBound': float(upper),
+                        'type': 'forecast'
+                    })
+                    
+                visualization_data = historical_data + forecast_viz_data
+                
+                # Update performance metrics for the alternative model
+                if mape_val is None or mape_val > 50:
+                    # Estimate MAPE for the LSTM model using recent data
+                    if len(ts_cleaned) >= 6:
+                        train_lstm = ts_cleaned[:-3]
+                        test_lstm = ts_cleaned[-3:]
+                        
+                        # Simple forecast test with LSTM
+                        test_forecasts = self._lstm_forecast(train_lstm, periods=3)
+                        lstm_mape = self.calculate_robust_mape(test_lstm.values, test_forecasts)
+                        
+                        # Only use LSTM MAPE if it's better than ARIMA
+                        if lstm_mape is not None and (mape_val is None or lstm_mape < mape_val):
+                            self.performance[category]['mape'] = lstm_mape
+                    
+                return {
+                    'model': 'LSTM',
+                    'forecast': forecast_df,
+                    'params': 'LSTM',
+                    'seasonal': False,
+                    'performance': self.performance[category],
+                    'visualization_data': visualization_data,
+                    'growth_rate': growth_rate,
+                    'alternative_model': True
+                }
+            except Exception as e:
+                print(f"Error in LSTM forecasting for {category}: {e}")
+                # Fall back to ARIMA or empty forecast if LSTM also fails
+        
         try:
+            # ARIMA forecasting (original approach)
             if is_seasonal:
                 from statsmodels.tsa.statespace.sarimax import SARIMAX
                 p, d, q, P, D, Q, s = params
-                final_model = SARIMAX(ts, order=(p, d, q), seasonal_order=(P, D, Q, s),
-                                      enforce_stationarity=False, enforce_invertibility=False)
+                final_model = SARIMAX(ts_cleaned, order=(p, d, q), seasonal_order=(P, D, Q, s),
+                                    enforce_stationarity=False, enforce_invertibility=False)
                 final_model_fit = final_model.fit(disp=False)
             else:
-                final_model = ARIMA(ts, order=params)
+                final_model = ARIMA(ts_cleaned, order=params)
                 final_model_fit = final_model.fit()
             
             forecast_values = final_model_fit.forecast(steps=periods)
             forecast_values = np.maximum(forecast_values, 0)
-            historical_mean = ts.mean()
+            historical_mean = ts_cleaned.mean()
             
             # Check for significant decline
             significant_decline = False
-            if len(ts) >= 6:
-                first_3_avg = ts[:3].mean()
-                last_3_avg = ts[-3:].mean()
+            if len(ts_cleaned) >= 6:
+                first_3_avg = ts_cleaned[:3].mean()
+                last_3_avg = ts_cleaned[-3:].mean()
                 if first_3_avg > 0 and (last_3_avg / first_3_avg) < 0.5:
                     significant_decline = True
             
@@ -504,12 +710,12 @@ class DemandForecaster:
                 forecast_values = np.maximum(forecast_values, 1)
             
             try:
-                if isinstance(ts.index[-1], pd.Timestamp):
-                    last_date = ts.index[-1]
+                if isinstance(ts_cleaned.index[-1], pd.Timestamp):
+                    last_date = ts_cleaned.index[-1]
                     forecast_index = pd.date_range(start=last_date, periods=periods+1, freq='MS')[1:]
                 else:
                     try:
-                        last_idx = int(ts.index[-1])
+                        last_idx = int(ts_cleaned.index[-1])
                         forecast_index = range(last_idx + 1, last_idx + periods + 1)
                     except Exception:
                         forecast_index = range(periods)
@@ -518,7 +724,7 @@ class DemandForecaster:
                 forecast_index = range(periods)
             
             try:
-                forecast_values = pd.Series(forecast_values).fillna(ts.mean()).values
+                forecast_values = pd.Series(forecast_values).fillna(ts_cleaned.mean()).values
                 forecast_df = pd.DataFrame({'forecast': forecast_values}, index=forecast_index)
                 try:
                     if is_seasonal:
@@ -574,7 +780,6 @@ class DemandForecaster:
             result = self._create_empty_forecast_results(category, ts)
             result['visualization_data'] = historical_data
             return result
-
 
     def _create_empty_forecast_results(self, category, ts):
         # Set a default average value based on ts

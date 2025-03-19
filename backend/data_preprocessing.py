@@ -2,6 +2,45 @@ import pandas as pd
 import numpy as np
 import os
 from datetime import datetime
+from sklearn.impute import KNNImputer
+
+def calculate_delivery_days(orders, supply_chain=None):
+    if 'delivery_days' not in orders.columns:
+        orders['delivery_days'] = np.nan
+
+    # Convert timestamps
+    for c in ['order_purchase_timestamp','order_approved_at','order_delivered_timestamp','order_estimated_delivery_date']:
+        if c in orders: orders[c] = pd.to_datetime(orders[c], errors='coerce')
+
+    # Compute delivery_days from actual or estimated dates
+    orders['delivery_days'] = (
+        (orders['order_delivered_timestamp'].fillna(orders['order_estimated_delivery_date']) -
+         orders['order_purchase_timestamp'])
+        .dt.days.clip(lower=1)
+    )
+
+    # Impute missing using category median if supply_chain provided
+    if supply_chain is not None and orders['delivery_days'].isna().any():
+        medians = (supply_chain.dropna(subset=['delivery_days'])
+                   .groupby('product_category_name')['delivery_days']
+                   .median())
+        orders['delivery_days'] = orders.apply(
+            lambda r: medians.get(r.product_category_name, np.nan) 
+                      if pd.isna(r.delivery_days) else r.delivery_days, axis=1
+        )
+
+    # Final fallback to global median
+    global_median = orders['delivery_days'].median()
+    orders['delivery_days'] = orders['delivery_days'].fillna(global_median).clip(1,30)
+
+    # Impute missing delivered timestamp
+    missing = orders['order_delivered_timestamp'].isna() & orders['order_purchase_timestamp'].notna()
+    orders.loc[missing, 'order_delivered_timestamp'] = (
+        orders.loc[missing, 'order_purchase_timestamp'] + 
+        pd.to_timedelta(orders.loc[missing, 'delivery_days'], unit='D')
+    )
+
+    return orders
 
 def preprocess_order_data(orders_df, output_dir=None):
     """
@@ -185,29 +224,28 @@ def preprocess_order_data(orders_df, output_dir=None):
     return orders_df, delivery_metrics
 
 def preprocess_product_data(products_df, output_dir=None):
-    """
-    Preprocess product data to handle missing values.
-    
-    Args:
-        products_df: DataFrame containing product data.
-        output_dir: Directory to save processed data (optional).
-        
-    Returns:
-        Processed DataFrame.
-    """
-    print("Preprocessing product data...")
-    for col in ['product_weight_g', 'product_length_cm', 'product_height_cm', 'product_width_cm']:
-        if col in products_df.columns:
-            products_df[col] = products_df.groupby('product_category_name')[col].transform(
-                lambda x: x.fillna(x.median())
-            )
-            global_median = products_df[col].median()
-            products_df[col] = products_df[col].fillna(global_median)
+    print("Preprocessing product data with KNN imputation...")
+    df = products_df.copy()
+    # Identify numeric attributes
+    numeric = ['product_weight_g','product_length_cm','product_height_cm','product_width_cm']
+    # Fill missing category names via KNN on numeric features
+    if df['product_category_name'].isna().sum()>0:
+        imputer = KNNImputer(n_neighbors=5)
+        df[numeric] = imputer.fit_transform(df[numeric])
+        # Assign most common category among 5 nearest neighbors
+        df['product_category_name'] = df['product_category_name'].fillna(
+            df.groupby(numeric)['product_category_name'].transform(lambda x: x.mode().iloc[0] if not x.mode().empty else 'Unknown')
+        )
+
+    # Fill any remaining numeric NaNs with global median
+    for col in numeric:
+        df[col].fillna(df[col].median(), inplace=True)
+
     if output_dir:
         os.makedirs(output_dir, exist_ok=True)
-        products_df.to_csv(os.path.join(output_dir, 'processed_products.csv'), index=False)
-    print("Product data preprocessing complete")
-    return products_df
+        df.to_csv(os.path.join(output_dir,'processed_products.csv'),index=False)
+
+    return df
 
 def preprocess_order_items(order_items_df, output_dir=None):
     """

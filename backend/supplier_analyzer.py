@@ -41,42 +41,34 @@ class SupplierAnalyzer:
         if missing_columns:
             raise ValueError(f"Missing required columns: {missing_columns}")
         
-        # Convert seller_id to string if it's not already
+        # Convert seller_id to string
         self.data['seller_id'] = self.data['seller_id'].astype(str)
         
-        # Handle missing values
+        # Fill missing numeric values with median
         for col in self.data.columns:
             if col != 'seller_id' and pd.api.types.is_numeric_dtype(self.data[col]):
-                # Fill missing numerical values with median
-                col_median = self.data[col].median()
-                self.data[col] = self.data[col].fillna(col_median)
+                self.data[col] = self.data[col].fillna(self.data[col].median())
         
-        # Create additional features for clustering
+        # Winsorize extreme total_sales at 99th percentile
+        cap = self.data['total_sales'].quantile(0.99)
+        self.data['total_sales'] = self.data['total_sales'].clip(upper=cap)
+        print(f"Capped extreme seller sales at {cap:.2f}")
         
-        # Add average order value if not already present
+        # Create additional clustering features
         if 'avg_order_value' not in self.data.columns:
-            self.data['avg_order_value'] = self.data['total_sales'] / self.data['order_count']
-            # Handle division by zero
-            self.data['avg_order_value'] = self.data['avg_order_value'].replace([np.inf, -np.inf], np.nan)
+            self.data['avg_order_value'] = (self.data['total_sales'] / self.data['order_count']).replace([np.inf, -np.inf], np.nan)
             self.data['avg_order_value'] = self.data['avg_order_value'].fillna(self.data['avg_order_value'].median())
         
-        # Add on-time delivery rate if available
         if 'on_time_delivery_rate' not in self.data.columns and 'on_time_delivery' in self.data.columns:
             self.data['on_time_delivery_rate'] = self.data['on_time_delivery'] * 100
         
-        # If shipping costs are available, calculate shipping ratio
         if 'shipping_costs' in self.data.columns:
-            self.data['shipping_ratio'] = (self.data['shipping_costs'] / self.data['total_sales']) * 100
-            self.data['shipping_ratio'] = self.data['shipping_ratio'].replace([np.inf, -np.inf], np.nan)
+            self.data['shipping_ratio'] = (self.data['shipping_costs'] / self.data['total_sales'] * 100).replace([np.inf, -np.inf], np.nan)
             self.data['shipping_ratio'] = self.data['shipping_ratio'].fillna(self.data['shipping_ratio'].median())
         
-        # Define features to use for clustering
         self.features = [
-            'order_count',
-            'avg_processing_time',
-            'avg_delivery_days',
-            'total_sales',
-            'avg_order_value'
+            'order_count', 'avg_processing_time', 'avg_delivery_days',
+            'total_sales', 'avg_order_value'
         ]
         if 'on_time_delivery_rate' in self.data.columns:
             self.features.append('on_time_delivery_rate')
@@ -84,6 +76,7 @@ class SupplierAnalyzer:
             self.features.append('shipping_ratio')
         
         print(f"Preprocessed data with {len(self.data)} sellers and {len(self.features)} features")
+
         
     def determine_optimal_clusters(self, max_clusters=10):
         """

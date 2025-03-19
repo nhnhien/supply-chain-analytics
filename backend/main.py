@@ -35,67 +35,63 @@ except ImportError:
 
 
 def calculate_delivery_days(orders, supply_chain=None):
-    if 'delivery_days' in orders.columns and not orders['delivery_days'].isna().all():
-        pass
-    else:
-        orders['order_purchase_timestamp'] = pd.to_datetime(orders['order_purchase_timestamp'])
-        orders['order_approved_at'] = pd.to_datetime(orders['order_approved_at'])
-        orders['processing_time'] = (orders['order_approved_at'] - orders['order_purchase_timestamp']).dt.days
-        
-        if 'order_delivered_customer_date' in orders.columns:
-            orders['order_delivered_customer_date'] = pd.to_datetime(orders['order_delivered_customer_date'])
-            mask = orders['order_delivered_customer_date'].notna() & orders['order_purchase_timestamp'].notna()
-            orders.loc[mask, 'delivery_days'] = (
-                orders.loc[mask, 'order_delivered_customer_date'] -
-                orders.loc[mask, 'order_purchase_timestamp']
-            ).dt.days
-        elif 'order_estimated_delivery_date' in orders.columns:
-            orders['order_estimated_delivery_date'] = pd.to_datetime(orders['order_estimated_delivery_date'])
-            mask = orders['order_estimated_delivery_date'].notna() & orders['order_purchase_timestamp'].notna()
-            orders.loc[mask, 'estimated_delivery_days'] = (
-                orders.loc[mask, 'order_estimated_delivery_date'] -
-                orders.loc[mask, 'order_purchase_timestamp']
-            ).dt.days
-            orders['delivery_days'] = orders.get('delivery_days', pd.Series(index=orders.index)).fillna(orders['estimated_delivery_days'])
-        else:
-            if 'delivery_days' not in orders.columns:
-                orders['delivery_days'] = None
+    print(f"🔍 Initial missing delivery timestamps: {orders['order_delivered_timestamp'].isna().sum()}")
 
-    if supply_chain is not None and orders['delivery_days'].isna().any():
-        if 'product_category_name' in supply_chain.columns:
-            category_medians = (supply_chain.dropna(subset=['delivery_days'])
-                                .groupby('product_category_name')['delivery_days']
-                                .median().to_dict())
-            if 'order_id' in supply_chain.columns:
-                order_categories = supply_chain[['order_id', 'product_category_name']].drop_duplicates()
-                orders_with_categories = orders.merge(order_categories, on='order_id', how='left')
-                for category, median in category_medians.items():
-                    if pd.notna(median):
-                        mask = ((orders_with_categories['product_category_name'] == category) &
-                                (orders_with_categories['delivery_days'].isna()))
-                        matching_order_ids = orders_with_categories.loc[mask, 'order_id']
-                        orders.loc[orders['order_id'].isin(matching_order_ids), 'delivery_days'] = median
-        if 'customer_state' in supply_chain.columns and orders['delivery_days'].isna().any():
-            state_medians = (supply_chain.dropna(subset=['delivery_days'])
-                             .groupby('customer_state')['delivery_days']
-                             .median().to_dict())
-            if 'order_id' in supply_chain.columns:
-                order_states = supply_chain[['order_id', 'customer_state']].drop_duplicates()
-                orders_with_states = orders.merge(order_states, on='order_id', how='left')
-                for state, median in state_medians.items():
-                    if pd.notna(median):
-                        mask = ((orders_with_states['customer_state'] == state) &
-                                (orders_with_states['delivery_days'].isna()))
-                        matching_order_ids = orders_with_states.loc[mask, 'order_id']
-                        orders.loc[orders['order_id'].isin(matching_order_ids), 'delivery_days'] = median
+    if "delivery_days" not in orders.columns:
+        orders["delivery_days"] = np.nan
 
-    global_median = orders['delivery_days'].median()
-    if not pd.isna(global_median):
-        orders['delivery_days'] = orders['delivery_days'].fillna(global_median)
-    else:
-        orders['delivery_days'] = orders['delivery_days'].fillna(7)
-    orders['delivery_days'] = orders['delivery_days'].clip(1, 30)
+    # Convert to datetime
+    for col in ["order_purchase_timestamp", "order_approved_at", "order_delivered_timestamp", "order_estimated_delivery_date"]:
+        if col in orders:
+            orders[col] = pd.to_datetime(orders[col], errors="coerce")
+
+    # Compute delivery_days from actual or estimated date
+    orders["delivery_days"] = (
+        (orders["order_delivered_timestamp"].fillna(orders["order_estimated_delivery_date"])
+         - orders["order_purchase_timestamp"])
+        .dt.days.clip(lower=1)
+    )
+
+    # Impute missing delivery days by product category median if supply_chain is available
+    if supply_chain is not None and "product_category_name" in supply_chain.columns:
+        category_medians = supply_chain.dropna(subset=["delivery_days"]) \
+                                       .groupby("product_category_name")["delivery_days"] \
+                                       .median()
+
+        # Ensure `product_category_name` is present before mapping
+        if "product_category_name" in orders.columns:
+            orders.loc[orders["delivery_days"].isna(), "delivery_days"] = \
+                orders.loc[orders["delivery_days"].isna(), "product_category_name"].map(category_medians)
+
+    # Impute missing delivery days by customer state median if supply_chain is available
+    if supply_chain is not None and "customer_state" in supply_chain.columns:
+        state_medians = supply_chain.dropna(subset=["delivery_days"]) \
+                                    .groupby("customer_state")["delivery_days"] \
+                                    .median()
+
+        # Ensure `customer_state` is present before mapping
+        if "customer_state" in orders.columns:
+            orders.loc[orders["delivery_days"].isna(), "delivery_days"] = \
+                orders.loc[orders["delivery_days"].isna(), "customer_state"].map(state_medians)
+
+    # Fallback to global median if still missing
+    global_median = orders["delivery_days"].median()
+    orders["delivery_days"] = orders["delivery_days"].fillna(global_median).clip(1, 30)
+
+    print(f"🔍 Missing delivery days after imputation: {orders['delivery_days'].isna().sum()}")
+
+    # Backfill order_delivered_timestamp using calculated delivery days
+    mask = orders["order_delivered_timestamp"].isna() & orders["order_purchase_timestamp"].notna()
+    orders.loc[mask, "order_delivered_timestamp"] = (
+        orders.loc[mask, "order_purchase_timestamp"] +
+        pd.to_timedelta(orders.loc[mask, "delivery_days"], unit="D")
+    )
+
+    print(f"✅ Missing delivery timestamps after processing: {orders['order_delivered_timestamp'].isna().sum()}")
+
     return orders
+
+
 
 
 def parse_arguments():
@@ -184,7 +180,7 @@ def run_pandas_analysis(args):
     
     print("Running time series forecasting...");
     forecaster = DemandForecaster(os.path.join(args.output_dir, 'monthly_demand.csv'))
-    forecaster.preprocess_data()
+    forecaster.preprocess_forecast_data()
     if args.use_auto_arima:
         print("Using auto ARIMA for parameter selection")
         forecaster.use_auto_arima = True
@@ -288,7 +284,7 @@ def run_pandas_analysis(args):
         pd.DataFrame(top_category_by_state).to_csv(
             os.path.join(args.output_dir, 'top_category_by_state.csv'), index=False)
     
-    print("Generating supply chain recommendations...");
+    print("Generating supply chain recommendations...")
     recommendations = []
     for category in top_categories:
         if category in forecasts:
@@ -303,7 +299,43 @@ def run_pandas_analysis(args):
             safety_stock = max(safety_stock, 0.3 * cat_demand)
             reorder_point = (cat_demand * lead_time_fraction) + safety_stock
             next_month_forecast = forecasts[category]['forecast'].iloc[0] if len(forecasts[category]) > 0 else cat_demand
-            growth_rate = ((next_month_forecast - cat_demand) / cat_demand * 100) if cat_demand > 0 else 0
+            
+            # Calculate growth rate with reasonable bounds (-50% to +150%)
+            if cat_demand > 0:
+                growth_rate = ((next_month_forecast - cat_demand) / cat_demand * 100)
+                # Apply bounds to growth rate
+                growth_rate = max(min(growth_rate, 150), -50)
+            else:
+                growth_rate = 0
+                
+            # If forecast seems unreasonable based on historical data, adjust it
+            if cat_demand > 0 and len(forecasts[category]) > 0:
+                # Check if forecast is outside reasonable bounds
+                if next_month_forecast > cat_demand * 2.5 or next_month_forecast < cat_demand * 0.5:
+                    print(f"Warning: Extreme forecast detected for {category}. Adjusting to more reasonable value.")
+                    # Cap forecast to reasonable bounds
+                    bounded_forecast = min(max(next_month_forecast, cat_demand * 0.5), cat_demand * 2.5)
+                    # Adjust growth rate accordingly
+                    bounded_growth_rate = ((bounded_forecast - cat_demand) / cat_demand * 100)
+                    bounded_growth_rate = max(min(bounded_growth_rate, 150), -50)
+                    
+                    # Update values with bounded versions
+                    next_month_forecast = bounded_forecast
+                    growth_rate = bounded_growth_rate
+            
+            # Adjust safety stock and reorder point based on growth trend
+            if growth_rate > 20:
+                # For high growth, increase safety stock
+                safety_stock_adj = safety_stock * (1 + (growth_rate / 100) * 0.5)
+                safety_stock = min(safety_stock_adj, safety_stock * 2)  # Cap at double the original
+                reorder_point = (cat_demand * lead_time_fraction) + safety_stock
+            elif growth_rate < -20:
+                # For significant decline, reduce safety stock but ensure minimum level
+                safety_stock_adj = safety_stock * (1 + (growth_rate / 100) * 0.3)
+                safety_stock = max(safety_stock_adj, safety_stock * 0.6)  # Don't go below 60% of original
+                reorder_point = (cat_demand * lead_time_fraction) + safety_stock
+            
+            # Calculate Economic Order Quantity (EOQ)
             annual_demand = cat_demand * 12
             order_cost = 50
             holding_cost_pct = 0.2
@@ -311,9 +343,16 @@ def run_pandas_analysis(args):
             if pd.isna(avg_item_cost) or avg_item_cost <= 0:
                 avg_item_cost = 50
             holding_cost = avg_item_cost * holding_cost_pct
-            eoq = np.sqrt((2 * annual_demand * order_cost) / holding_cost)
-            order_frequency = annual_demand / eoq
-            days_between_orders = 365 / order_frequency
+            
+            # Adjust annual demand based on growth trend for EOQ calculation
+            adjusted_annual_demand = annual_demand * (1 + (growth_rate / 100))
+            adjusted_annual_demand = max(adjusted_annual_demand, annual_demand * 0.5)  # Ensure positive demand
+            
+            eoq = np.sqrt((2 * adjusted_annual_demand * order_cost) / holding_cost)
+            order_frequency = adjusted_annual_demand / eoq if eoq > 0 else 12  # Default to monthly if EOQ calculation fails
+            days_between_orders = 365 / order_frequency if order_frequency > 0 else 30  # Default to monthly
+            
+            # Add recommendation with adjustments for extreme values
             recommendations.append({
                 'product_category': category,
                 'category': category,
@@ -322,10 +361,11 @@ def run_pandas_analysis(args):
                 'reorder_point': reorder_point,
                 'next_month_forecast': next_month_forecast,
                 'forecast_demand': next_month_forecast,
-                'growth_rate': growth_rate,
+                'growth_rate': growth_rate,  # Already bounded between -50% and +150%
                 'lead_time_days': lead_time_days,
-                'days_between_orders': days_between_orders,
-                'avg_item_cost': avg_item_cost
+                'days_between_orders': min(days_between_orders, 90),  # Cap at 90 days maximum
+                'avg_item_cost': avg_item_cost,
+                'adjusted_for_growth': abs(growth_rate) > 20  # Flag to indicate growth adjustment
             })
     recommendations_df = pd.DataFrame(recommendations)
     recommendations_df.to_csv(os.path.join(args.output_dir, 'reorder_recommendations.csv'), index=False)
