@@ -63,6 +63,14 @@ function App() {
     setDrawerOpen(!drawerOpen);
   };
 
+  // New handler to delay closing of drawer for better navigation experience.
+  const handleNavItemClick = () => {
+    // Delay closing drawer to allow Link navigation to complete.
+    setTimeout(() => {
+      toggleDrawer();
+    }, 150);
+  };
+
   const drawerItems = [
     { text: 'Dashboard', icon: <DashboardIcon />, path: '/' },
     { text: 'Demand Forecast', icon: <TimelineIcon />, path: '/forecast' },
@@ -82,7 +90,13 @@ function App() {
       <Divider />
       <List>
         {drawerItems.map((item) => (
-          <ListItem button key={item.text} component={Link} to={item.path} onClick={toggleDrawer}>
+          <ListItem 
+            button 
+            key={item.text} 
+            component={Link} 
+            to={item.path} 
+            onClick={handleNavItemClick}
+          >
             <ListItemIcon>
               {item.icon}
             </ListItemIcon>
@@ -92,14 +106,6 @@ function App() {
       </List>
     </div>
   );
-
-  if (loading) {
-    return (
-      <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
-        <Typography variant="h5">Loading dashboard data...</Typography>
-      </Box>
-    );
-  }
 
   if (error) {
     return (
@@ -166,7 +172,7 @@ function App() {
         </Drawer>
         
         <Box component="main" sx={{ flexGrow: 1, p: 3 }}>
-          <Toolbar /> {/* This adds spacing below the AppBar */}
+          <Toolbar /> {/* Adds spacing below the AppBar */}
           
           {/* Display data warnings if any */}
           {dataWarnings.length > 0 && (

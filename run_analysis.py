@@ -374,7 +374,7 @@ def main():
     
     # Check dependencies
     if not check_dependencies():
-        return 1
+            print("Critical dependencies are missing. Please install required packages before running the analysis.")
     
     # Clean output directory if requested
     if args.clean:

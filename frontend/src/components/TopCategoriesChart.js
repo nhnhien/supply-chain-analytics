@@ -1,5 +1,5 @@
 import React, { useMemo } from 'react';
-import { Box } from '@mui/material';
+import { Box, Typography } from '@mui/material';
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 
 /**
@@ -16,7 +16,7 @@ const TopCategoriesChart = ({ categories, categoryData }) => {
     if (!Array.isArray(categories) || typeof categoryData !== 'object' || categoryData === null) return [];
     
     return categories.map(category => {
-      // Use optional chaining to safely access category data.
+      // Safely access category data.
       const categoryRows = Array.isArray(categoryData?.[category]) ? categoryData[category] : [];
       
       // Sum up demand values (using parseFloat to ensure numeric addition)
@@ -31,7 +31,21 @@ const TopCategoriesChart = ({ categories, categoryData }) => {
       };
     });
   }, [categories, categoryData]);
-  
+
+  // Compute the sum of all demand values.
+  const totalDemandSum = chartData.reduce((sum, d) => sum + d.value, 0);
+
+  // If total demand is zero, render a friendly message.
+  if (totalDemandSum === 0) {
+    return (
+      <Box sx={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <Typography variant="body1" color="text.secondary">
+          No demand data available
+        </Typography>
+      </Box>
+    );
+  }
+
   // Colors for the pie chart
   const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#A4DE6C'];
   

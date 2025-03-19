@@ -196,14 +196,33 @@ def run_pandas_analysis(args):
     
     forecast_report = forecaster.generate_forecast_report(os.path.join(args.output_dir, 'forecast_report.csv'))
     
-    # NEW: Generate forecast visualization to ensure forecasts are properly visualized
+    # NEW: Generate forecast visualization.
     print("Generating forecast visualization...");
     visualizer = SupplyChainVisualizer(output_dir=args.output_dir)
+    # If visualize_forecasts is not defined, provide a basic implementation.
+    if not hasattr(visualizer, 'visualize_forecasts'):
+        def visualize_forecasts(forecast_report):
+            try:
+                # Check if forecast_report is a DataFrame with required columns.
+                if hasattr(forecast_report, 'columns') and 'date' in forecast_report.columns and 'forecast' in forecast_report.columns:
+                    plt.figure(figsize=(10, 6))
+                    plt.plot(forecast_report['date'], forecast_report['forecast'], label='Forecast')
+                    plt.xlabel('Date')
+                    plt.ylabel('Forecast Demand')
+                    plt.title('Forecast Visualization')
+                    plt.legend()
+                    output_path = os.path.join(args.output_dir, 'forecast_visualization.png')
+                    plt.savefig(output_path)
+                    plt.close()
+                    print(f"Forecast visualization saved to {output_path}")
+                else:
+                    print("Forecast report does not contain expected columns for visualization.")
+            except Exception as e:
+                print(f"Error generating forecast visualization: {e}")
+        visualizer.visualize_forecasts = visualize_forecasts
+
     try:
-        if hasattr(visualizer, 'visualize_forecasts'):
-            visualizer.visualize_forecasts(forecast_report)
-        else:
-            print("Warning: 'visualize_forecasts' method not implemented in SupplyChainVisualizer.")
+        visualizer.visualize_forecasts(forecast_report)
     except Exception as e:
         print(f"Error generating forecast visualization: {e}")
     

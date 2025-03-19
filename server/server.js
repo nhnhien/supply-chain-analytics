@@ -54,6 +54,23 @@ app.get('/api/mongo-status', (req, res) => {
   res.json({ mongoAvailable });
 });
 
+// NEW: Endpoint to query a MongoDB collection.
+// Example: GET /api/mongo-data/forecasts will return up to 100 documents from the "forecasts" collection.
+app.get('/api/mongo-data/:collection', async (req, res) => {
+  if (!mongoAvailable) {
+    return res.status(500).json({ error: "MongoDB is not available" });
+  }
+  const collectionName = req.params.collection;
+  try {
+    const collection = db.collection(collectionName);
+    const docs = await collection.find({}).limit(100).toArray();
+    return res.json({ collection: collectionName, data: docs });
+  } catch (err) {
+    console.error("Error querying MongoDB:", err);
+    return res.status(500).json({ error: "Error querying MongoDB", details: err.message });
+  }
+});
+
 // Middleware
 app.use(cors());
 app.use(express.json());
@@ -124,7 +141,6 @@ app.get('/api/forecasts/:category', (req, res) => {
     }
     
     try {
-      // Use csv-parse to properly handle quoted fields.
       const records = parse(data, { columns: true, skip_empty_lines: true });
       const categoryForecast = records.find(f => f.category === category);
       
@@ -205,13 +221,10 @@ app.get('/api/dashboard-data', (req, res) => {
           if (!records || records.length === 0) {
             console.warn(`Warning: ${key} file contains no data records`);
           }
-          
           resolve({ key, data: records, status: 'success' });
         } catch (parseError) {
           console.error(`Error parsing ${key} CSV: ${parseError}`);
-          
           const isCritical = ['monthlyDemand', 'forecastReport'].includes(key);
-          
           if (isCritical) {
             reject({ 
               key, 
@@ -238,7 +251,6 @@ app.get('/api/dashboard-data', (req, res) => {
       
       results.forEach(result => {
         data[result.key] = result.data;
-        
         if (result.status === 'parse_error') {
           dataWarnings.push({
             dataType: result.key,

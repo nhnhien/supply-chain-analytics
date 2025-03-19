@@ -34,62 +34,63 @@ const DashboardPage = ({ data }) => {
     recommendations = { inventory: [] } 
   } = data;
   
-  // If kpis is missing, show a fallback message
   if (!kpis) {
     return <Typography>No KPI data available</Typography>;
   }
   
-  // Simplified processingTime calculation using optional chaining
-  const processingTimeValue = kpis.avg_processing_time?.toFixed(1) ||
+  // Move complex KPI calculations into useMemo to avoid excessive re-rendering.
+  const formattedKPIs = useMemo(() => {
+    const processingTimeValue = kpis.avg_processing_time?.toFixed(1) ||
                                 data?.performance?.metrics?.avg_processing_time?.toFixed(1) ||
                                 '0.5';
-  
-  const formattedKPIs = {
-    processingTime: processingTimeValue,
-    forecastGrowth: (() => {
-      if (forecasts && forecasts.forecastReport && forecasts.forecastReport.length > 0) {
-        const validGrowthRates = forecasts.forecastReport
-          .filter(f => f.growth_rate != null)
-          .map(f => parseFloat(f.growth_rate));
-        
-        if (validGrowthRates.length > 0) {
-          const sumGrowth = validGrowthRates.reduce((sum, rate) => {
-            const clippedRate = Math.max(Math.min(rate, 100), -80);
-            return sum + clippedRate;
-          }, 0);
-          return (sumGrowth / validGrowthRates.length).toFixed(1);
+    
+    return {
+      processingTime: processingTimeValue,
+      forecastGrowth: (() => {
+        if (forecasts && forecasts.forecastReport && forecasts.forecastReport.length > 0) {
+          const validGrowthRates = forecasts.forecastReport
+            .filter(f => f.growth_rate != null)
+            .map(f => parseFloat(f.growth_rate));
+          
+          if (validGrowthRates.length > 0) {
+            const sumGrowth = validGrowthRates.reduce((sum, rate) => {
+              const clippedRate = Math.max(Math.min(rate, 100), -80);
+              return sum + clippedRate;
+            }, 0);
+            return (sumGrowth / validGrowthRates.length).toFixed(1);
+          }
         }
-      }
-      return '0.0';
-    })(),
-    onTimeDelivery: kpis.on_time_delivery !== undefined 
-      ? kpis.on_time_delivery.toFixed(1) 
-      : data?.performance?.metrics?.on_time_delivery_rate?.toFixed(1) || '85.0',
-    perfectOrderRate: kpis.perfect_order_rate !== undefined 
-      ? kpis.perfect_order_rate.toFixed(1) 
-      : kpis.on_time_delivery !== undefined 
-        ? (kpis.on_time_delivery * 0.9).toFixed(1)
-        : '75.0',
-    inventoryTurnover: kpis.inventory_turnover !== undefined 
-      ? kpis.inventory_turnover.toFixed(1) 
-      : '8.0',
-    totalDemand: (() => {
-      if (kpis.total_demand !== undefined) {
-        return new Intl.NumberFormat().format(kpis.total_demand);
-      }
-      if (demandData && Array.isArray(demandData)) {
-        const totalDemand = demandData.reduce((sum, row) => {
-          return sum + (parseFloat(row.count || row.order_count || 0) || 0);
-        }, 0);
-        return new Intl.NumberFormat().format(totalDemand);
-      }
-      if (data && data.processed_orders && Array.isArray(data.processed_orders)) {
-        return new Intl.NumberFormat().format(data.processed_orders.length);
-      }
-      return 'N/A';
-    })()
-  };
-  
+        return '0.0';
+      })(),
+      onTimeDelivery: kpis.on_time_delivery !== undefined 
+        ? kpis.on_time_delivery.toFixed(1) 
+        : data?.performance?.metrics?.on_time_delivery_rate?.toFixed(1) || '85.0',
+      perfectOrderRate: kpis.perfect_order_rate !== undefined 
+        ? kpis.perfect_order_rate.toFixed(1) 
+        : kpis.on_time_delivery !== undefined 
+          ? (kpis.on_time_delivery * 0.9).toFixed(1)
+          : '75.0',
+      inventoryTurnover: kpis.inventory_turnover !== undefined 
+        ? kpis.inventory_turnover.toFixed(1) 
+        : '8.0',
+      totalDemand: (() => {
+        if (kpis.total_demand !== undefined) {
+          return new Intl.NumberFormat().format(kpis.total_demand);
+        }
+        if (demandData && Array.isArray(demandData)) {
+          const totalDemand = demandData.reduce((sum, row) => {
+            return sum + (parseFloat(row.count || row.order_count || 0) || 0);
+          }, 0);
+          return new Intl.NumberFormat().format(totalDemand);
+        }
+        if (data && data.processed_orders && Array.isArray(data.processed_orders)) {
+          return new Intl.NumberFormat().format(data.processed_orders.length);
+        }
+        return 'N/A';
+      })()
+    };
+  }, [kpis, forecasts, demandData, data]);
+
   return (
     <Box>
       <Typography variant="h4" gutterBottom>

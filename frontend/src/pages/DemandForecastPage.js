@@ -28,18 +28,28 @@ const processHistoricalData = (categoryData) => {
     if (!point) return acc;
     const count = parseNumericValue(point.count) || parseNumericValue(point.order_count, 0);
     if (count <= 0) return acc;
-    let pointDate;
-    if (typeof point.date === 'string') {
-      pointDate = new Date(point.date);
-    } else if (!point.date && (point.order_year || point.year) && (point.order_month || point.month)) {
-      pointDate = new Date(
-        parseInt(point.order_year || point.year),
-        parseInt(point.order_month || point.month) - 1,
-        1
-      );
+    let pointDate = null;
+    try {
+      if (typeof point.date === 'string') {
+        pointDate = new Date(point.date);
+      }
+    } catch (err) {
+      console.warn(`Error parsing date string: ${point.date}.`);
+    }
+    // If no valid date and year/month fields exist, try to construct the date.
+    if (!pointDate && (point.order_year || point.year) && (point.order_month || point.month)) {
+      try {
+        pointDate = new Date(
+          parseInt(point.order_year || point.year),
+          parseInt(point.order_month || point.month) - 1,
+          1
+        );
+      } catch (err) {
+        console.warn(`Error constructing date from year/month for point: ${JSON.stringify(point)}.`);
+        pointDate = null;
+      }
     }
     if (!pointDate || isNaN(pointDate.getTime())) {
-      // Exclude data point with invalid date
       return acc;
     }
     acc.push({
@@ -60,21 +70,16 @@ const ForecastInterpretation = ({ forecast }) => {
   const histDemand = parseNumericValue(forecast.avg_historical_demand, null);
   const dataQuality = forecast.data_quality || 'Unknown';
 
-  const hasGrowthRate = growthRateRaw !== null;
-  const hasMape = mapeRaw !== null;
-  const hasRmse = rmseRaw !== null;
-  const hasHistoricalDemand = histDemand !== null;
-
-  const growthRate = hasGrowthRate ? Math.max(Math.min(growthRateRaw, 100), -80) : 0;
-  const mape = hasMape ? Math.min(mapeRaw, 100) : 30;
+  const growthRate = growthRateRaw !== null ? Math.max(Math.min(growthRateRaw, 100), -80) : 0;
+  const mape = mapeRaw !== null ? Math.min(mapeRaw, 100) : 30;
 
   let interpretationText = '';
 
   if (dataQuality === 'Limited') {
     interpretationText = `The ${forecast.category || 'this'} category has limited historical data, which affects forecast reliability. `;
-    if (hasHistoricalDemand && histDemand > 0) {
+    if (histDemand !== null && histDemand > 0) {
       interpretationText += `Historical average demand is ${Math.round(histDemand)} units. `;
-      if (hasGrowthRate) {
+      if (growthRateRaw !== null) {
         const growthDirection = growthRate > 0 ? 'growth' : 'decline';
         interpretationText += `The forecast suggests a ${Math.abs(growthRate).toFixed(1)}% ${growthDirection}, but treat this as an estimate given the limited data. `;
       } else {
@@ -117,7 +122,7 @@ const ForecastInterpretation = ({ forecast }) => {
       interpretationText += `${forecastConfidence}The ${forecast.category || 'selected'} category shows stable demand (${growthRate.toFixed(1)}%). `;
       interpretationText += `Maintain current inventory levels.`;
     }
-    if (hasHistoricalDemand && hasRmse && histDemand > 0) {
+    if (histDemand !== null && rmseRaw !== null && histDemand > 0) {
       const rmsePercentage = (rmseRaw / histDemand * 100).toFixed(1);
       interpretationText += ` Typical forecast error is about ${rmsePercentage}% (${Math.round(rmseRaw)} units).`;
     }
@@ -150,8 +155,8 @@ const ForecastInterpretation = ({ forecast }) => {
 };
 
 const DemandForecastPage = ({ data }) => {
-  // Memoize safeData so that it only updates when data changes
-  const safeData = useMemo(() => data || {}, [data]); 
+  // Memoize safeData so that it only updates when data changes.
+  const safeData = useMemo(() => data || {}, [data]);
 
   const [selectedCategory, setSelectedCategory] = useState('');
   const [forecastData, setForecastData] = useState([]);
@@ -191,112 +196,111 @@ const DemandForecastPage = ({ data }) => {
     }
   }, [validForecastReport, selectedCategory, isInitialized]);
 
-  // Centralized forecast data processing with fallback handling
-  const processForecastData = () => {
-    if (!selectedCategory) {
-      setForecastData([]);
-      setHasVisualizationData(false);
-      setForecastNote('Please select a category');
-      return;
-    }
-    
-    const forecastReport = validForecastReport;
-    const categoryData = getCategoryData(safeData, selectedCategory);
-    const historicalData = processHistoricalData(categoryData);
-    
-    const categoryForecast = forecastReport.find(forecast =>
-      forecast && (
-        forecast.category === selectedCategory ||
-        forecast.product_category === selectedCategory ||
-        forecast.product_category_name === selectedCategory
-      )
-    );
-    
-    const fallbackToHistorical = (note) => {
-      if (historicalData.length > 0) {
-        setForecastData(historicalData);
-        setHasVisualizationData(true);
-        setForecastNote(note);
-      } else {
+  // Process forecast data when dependencies change.
+  useEffect(() => {
+    const processForecastData = () => {
+      if (!selectedCategory) {
         setForecastData([]);
         setHasVisualizationData(false);
-        setForecastNote(note);
+        setForecastNote('Please select a category');
+        return;
       }
-    };
-    
-    if (categoryForecast && historicalData.length > 0) {
-      try {
-        const lastPoint = historicalData[historicalData.length - 1];
-        const forecastValue = parseNumericValue(categoryForecast.forecast_demand || categoryForecast.next_month_forecast, 0);
-        const growthRate = categoryForecast.growth_rate != null
-          ? Math.max(Math.min(parseNumericValue(categoryForecast.growth_rate, 0), 100), -80) / 100
-          : 0;
-        const forecastPoints = [];
-        
-        // Generate forecast points for the next 6 months
-        for (let i = 1; i <= 6; i++) {
-          const forecastDate = new Date(lastPoint.date);
-          forecastDate.setMonth(forecastDate.getMonth() + i);
+      
+      const forecastReport = validForecastReport;
+      const categoryData = getCategoryData(safeData, selectedCategory);
+      const historicalData = processHistoricalData(categoryData);
+      
+      const categoryForecast = forecastReport.find(forecast =>
+        forecast &&
+        (forecast.category === selectedCategory ||
+         forecast.product_category === selectedCategory ||
+         forecast.product_category_name === selectedCategory)
+      );
+      
+      const fallbackToHistorical = (note) => {
+        if (historicalData.length > 0) {
+          setForecastData(historicalData);
+          setHasVisualizationData(true);
+          setForecastNote(note);
+        } else {
+          setForecastData([]);
+          setHasVisualizationData(false);
+          setForecastNote(note);
+        }
+      };
+      
+      if (categoryForecast && historicalData.length > 0) {
+        try {
+          const lastPoint = historicalData[historicalData.length - 1];
+          const forecastValue = parseNumericValue(categoryForecast.forecast_demand || categoryForecast.next_month_forecast, 0);
+          const growthRate = categoryForecast.growth_rate != null
+            ? Math.max(Math.min(parseNumericValue(categoryForecast.growth_rate, 0), 100), -80) / 100
+            : 0;
+          const forecastPoints = [];
           
-          let pointValue;
-          if (i === 1 && forecastValue > 0) {
-            pointValue = forecastValue;
-          } else {
-            if (growthRate < -0.5) {
-              const decayFactor = Math.pow(1 + growthRate, i);
-              pointValue = Math.max(lastPoint.value * decayFactor, 1);
-            } else if (growthRate > 0) {
-              const adjustedGrowth = growthRate / (1 + 0.2 * (i - 1));
-              pointValue = lastPoint.value * (1 + adjustedGrowth * i);
+          // Generate forecast points for the next 6 months.
+          for (let i = 1; i <= 6; i++) {
+            const forecastDate = new Date(lastPoint.date);
+            forecastDate.setMonth(forecastDate.getMonth() + i);
+            
+            let pointValue;
+            if (i === 1 && forecastValue > 0) {
+              pointValue = forecastValue;
             } else {
-              pointValue = Math.max(lastPoint.value * Math.pow(1 + growthRate, i), 1);
+              if (growthRate < -0.5) {
+                const decayFactor = Math.pow(1 + growthRate, i);
+                pointValue = Math.max(lastPoint.value * decayFactor, 1);
+              } else if (growthRate > 0) {
+                const adjustedGrowth = growthRate / (1 + 0.2 * (i - 1));
+                pointValue = lastPoint.value * (1 + adjustedGrowth * i);
+              } else {
+                pointValue = Math.max(lastPoint.value * Math.pow(1 + growthRate, i), 1);
+              }
             }
+            
+            const mape = categoryForecast.mape != null
+              ? Math.min(parseNumericValue(categoryForecast.mape, 20), 100) / 100
+              : 0.2;
+            const errorFactor = mape * (1 + (i - 1) * 0.2);
+            const lowerBound = Math.max(pointValue * (1 - errorFactor), 0);
+            const upperBound = pointValue * (1 + errorFactor);
+            
+            forecastPoints.push({
+              date: forecastDate,
+              value: pointValue,
+              lowerBound,
+              upperBound,
+              type: 'forecast'
+            });
           }
           
-          const mape = categoryForecast.mape != null
-            ? Math.min(parseNumericValue(categoryForecast.mape, 20), 100) / 100
-            : 0.2;
-          const errorFactor = mape * (1 + (i - 1) * 0.2);
-          const lowerBound = Math.max(pointValue * (1 - errorFactor), 0);
-          const upperBound = pointValue * (1 + errorFactor);
+          const combinedData = [...historicalData, ...forecastPoints];
+          setForecastData(combinedData);
+          setHasVisualizationData(true);
           
-          forecastPoints.push({
-            date: forecastDate,
-            value: pointValue,
-            lowerBound,
-            upperBound,
-            type: 'forecast'
-          });
+          const mapeValue = parseNumericValue(categoryForecast.mape, 0);
+          if (mapeValue > 50) {
+            setForecastNote('Note: High forecast uncertainty. Consider this visualization as indicative only.');
+          } else if (mapeValue > 25) {
+            setForecastNote('Note: Moderate forecast uncertainty. Treat projections as directional estimates.');
+          } else {
+            setForecastNote('');
+          }
+        } catch (error) {
+          console.error("Error calculating forecast data:", error);
+          fallbackToHistorical('Error generating forecast. Showing historical data only.');
         }
-        
-        const combinedData = [...historicalData, ...forecastPoints];
-        setForecastData(combinedData);
-        setHasVisualizationData(true);
-        
-        const mapeValue = parseNumericValue(categoryForecast.mape, 0);
-        if (mapeValue > 50) {
-          setForecastNote('Note: High forecast uncertainty. Consider this visualization as indicative only.');
-        } else if (mapeValue > 25) {
-          setForecastNote('Note: Moderate forecast uncertainty. Treat projections as directional estimates.');
-        } else {
-          setForecastNote('');
-        }
-      } catch (error) {
-        console.error("Error calculating forecast data:", error);
-        fallbackToHistorical('Error generating forecast. Showing historical data only.');
-      }
-    } else {
-      if (historicalData.length > 0) {
-        fallbackToHistorical('No forecast data available for this category. Showing historical data only.');
       } else {
-        fallbackToHistorical('No historical data available for this category.');
+        if (historicalData.length > 0) {
+          fallbackToHistorical('No forecast data available for this category. Showing historical data only.');
+        } else {
+          fallbackToHistorical('No historical data available for this category.');
+        }
       }
-    }
-  };
+    };
 
-  useEffect(() => {
     processForecastData();
-  }, [selectedCategory, safeData, validForecastReport]); // Dependencies updated
+  }, [selectedCategory, safeData, validForecastReport]);
 
   const handleCategoryChange = (event) => {
     setSelectedCategory(event.target.value);
@@ -304,13 +308,19 @@ const DemandForecastPage = ({ data }) => {
 
   const formatDate = (date) => {
     if (!date) return '';
-    const d = typeof date === 'string' ? new Date(date) : date;
+    let d;
+    try {
+      d = typeof date === 'string' ? new Date(date) : date;
+    } catch (error) {
+      console.warn(`Error converting date: ${date}`, error);
+      return 'Invalid Date';
+    }
     return isNaN(d.getTime()) ? 'Invalid Date' : d.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
   };
 
-  const getCurrentCategoryForecast = () => {
+  // Moved the getCurrentCategoryForecast function inside the scope where it's used.
+  const currentCategoryForecast = useMemo(() => {
     if (!safeData || !safeData.forecastReport) return [];
-    
     return getValidArray(safeData.forecastReport)
       .filter(f => f && (
         f.category === selectedCategory ||
@@ -326,12 +336,11 @@ const DemandForecastPage = ({ data }) => {
         rmse: parseNumericValue(forecast.rmse),
         mae: parseNumericValue(forecast.mae)
       }));
-  };
+  }, [safeData, selectedCategory]);
 
-  const categoryForecasts = getCurrentCategoryForecast();
-  const dataQuality = categoryForecasts && categoryForecasts[0] ? categoryForecasts[0].data_quality : null;
+  const dataQuality = currentCategoryForecast && currentCategoryForecast[0] ? currentCategoryForecast[0].data_quality : null;
   
-  // If no forecast or performance metrics exist, display an alert
+  // If no forecast or performance metrics exist, display an alert.
   if (!safeData.forecastReport && !safeData.performanceMetrics) {
     return (
       <Box>
@@ -346,7 +355,7 @@ const DemandForecastPage = ({ data }) => {
     );
   }
 
-  // Centralized chart rendering for forecast data
+  // Render the forecast chart.
   const renderForecastChart = () => {
     if (!hasVisualizationData || forecastData.length === 0) {
       return (
@@ -484,12 +493,12 @@ const DemandForecastPage = ({ data }) => {
             <Typography component="h2" variant="h6" color="primary" gutterBottom>
               Forecast Statistics
             </Typography>
-            {getValidArray(getCurrentCategoryForecast()).map((forecast, index) => (
+            {getValidArray(currentCategoryForecast).map((forecast, index) => (
               <Box key={`${forecast.category}-${index}`} sx={{ mb: 2 }}>
                 {/* Render forecast detail cards (omitted for brevity) */}
               </Box>
             ))}
-            <ForecastInterpretation forecast={getValidArray(getCurrentCategoryForecast())[0]} />
+            <ForecastInterpretation forecast={getValidArray(currentCategoryForecast)[0]} />
           </Paper>
         </Grid>
 

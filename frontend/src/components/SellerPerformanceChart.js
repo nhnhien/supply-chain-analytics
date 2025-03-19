@@ -1,80 +1,77 @@
-import React, { useMemo } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Box, Typography } from '@mui/material';
 import { ScatterChart, Scatter, XAxis, YAxis, ZAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 
-/**
- * Seller Performance Chart Component with enhanced data validation.
- * 
- * @param {Object} props Component props
- * @param {Array} props.sellerData Array of seller performance data
- */
 const SellerPerformanceChart = ({ sellerData }) => {
-  // Process seller data for visualization with robust error handling
-  const processedData = useMemo(() => {
-    if (!sellerData || sellerData.length === 0) return [];
-    
-    // Group sellers by cluster
-    const clusters = {};
-    
-    sellerData.forEach(seller => {
-      if (!seller) return; // Skip null/undefined sellers
-      
-      // Validate prediction: if not 0, 1, or 2, default to 1 (medium)
-      let cluster = seller.prediction;
-      if (cluster !== 0 && cluster !== 1 && cluster !== 2) {
-        cluster = 1;
-      }
-      
-      if (!clusters[cluster]) {
-        clusters[cluster] = [];
-      }
-      
-      // Validate and parse total_sales
-      let totalSales = parseFloat(seller.total_sales);
-      if (isNaN(totalSales)) {
-        console.warn(`Missing or invalid total_sales for seller ${seller.seller_id || 'unknown'}. Defaulting to 0.`);
-        totalSales = 0;
-      }
-      
-      // Validate and parse avg_processing_time
-      let processingTime = parseFloat(seller.avg_processing_time);
-      if (isNaN(processingTime)) {
-        console.warn(`Missing or invalid avg_processing_time for seller ${seller.seller_id || 'unknown'}. Defaulting to 0.`);
-        processingTime = 0;
-      }
-      
-      // Validate order_count; default to 20 if missing or invalid
-      let orderCount = parseFloat(seller.order_count);
-      if (isNaN(orderCount) || orderCount <= 0) {
-        console.warn(`Missing or invalid order_count for seller ${seller.seller_id || 'unknown'}. Defaulting to 20.`);
-        orderCount = 20;
-      }
-      
-      clusters[cluster].push({
-        x: totalSales,
-        y: processingTime,
-        z: orderCount,
-        name: seller.seller_id || `Seller ${clusters[cluster].length + 1}`
+  const [processedData, setProcessedData] = useState([]);
+
+  useEffect(() => {
+    let isMounted = true;
+    // Heavy data processing: group sellers by cluster.
+    const computeData = () => {
+      if (!sellerData || sellerData.length === 0) return [];
+      const clusters = {};
+      sellerData.forEach(seller => {
+        if (!seller) return; // Skip null/undefined sellers
+        // Validate prediction: if not 0, 1, or 2, default to 1 (medium)
+        let cluster = seller.prediction;
+        if (cluster !== 0 && cluster !== 1 && cluster !== 2) {
+          cluster = 1;
+        }
+        if (!clusters[cluster]) {
+          clusters[cluster] = [];
+        }
+        // Validate and parse total_sales
+        let totalSales = parseFloat(seller.total_sales);
+        if (isNaN(totalSales)) {
+          console.warn(`Missing or invalid total_sales for seller ${seller.seller_id || 'unknown'}. Defaulting to 0.`);
+          totalSales = 0;
+        }
+        // Validate and parse avg_processing_time
+        let processingTime = parseFloat(seller.avg_processing_time);
+        if (isNaN(processingTime)) {
+          console.warn(`Missing or invalid avg_processing_time for seller ${seller.seller_id || 'unknown'}. Defaulting to 0.`);
+          processingTime = 0;
+        }
+        // Validate order_count; default to 20 if missing or invalid
+        let orderCount = parseFloat(seller.order_count);
+        if (isNaN(orderCount) || orderCount <= 0) {
+          console.warn(`Missing or invalid order_count for seller ${seller.seller_id || 'unknown'}. Defaulting to 20.`);
+          orderCount = 20;
+        }
+        clusters[cluster].push({
+          x: totalSales,
+          y: processingTime,
+          z: orderCount,
+          name: seller.seller_id || `Seller ${clusters[cluster].length + 1}`
+        });
       });
-    });
-    
-    return Object.entries(clusters).map(([cluster, data]) => ({
-      cluster: Number(cluster),
-      data
-    }));
+      return Object.entries(clusters).map(([cluster, data]) => ({
+        cluster: Number(cluster),
+        data
+      }));
+    };
+
+    const result = computeData();
+    if (isMounted) {
+      setProcessedData(result);
+    }
+    // Cleanup function to clear heavy data when component unmounts.
+    return () => {
+      isMounted = false;
+      setProcessedData([]);
+    };
   }, [sellerData]);
-  
-  // Colors for each cluster (for clusters 0, 1, and 2)
+
+  // Colors and names for clusters
   const clusterColors = ['#0088FE', '#00C49F', '#FF8042'];
-  
-  // Names for each cluster
   const clusterNames = {
     0: 'High Performers',
     1: 'Average Performers',
     2: 'Low Performers'
   };
-  
-  // Compute a dynamic Z-axis range based on the order_count values (z) across all clusters.
+
+  // Compute dynamic Z-axis range based on all order_count values.
   const dynamicZRange = useMemo(() => {
     const allZ = processedData.flatMap(cluster => cluster.data.map(d => d.z));
     if (allZ.length === 0) return [50, 400];
@@ -82,14 +79,14 @@ const SellerPerformanceChart = ({ sellerData }) => {
     const dataMax = Math.max(...allZ);
     const epsilon = 1e-6;
     const delta = dataMax - dataMin;
-    if (delta < epsilon) return [50, 50]; // If the range is extremely small, use a fixed bubble size
+    if (delta < epsilon) return [50, 50]; // Use fixed size if values are uniform.
     const desiredMaxSize = 400;
     const scale = (desiredMaxSize - 50) / delta;
     const dynamicMax = 50 + delta * scale;
     return [50, dynamicMax];
   }, [processedData]);
-  
-  // Custom tooltip to display seller details
+
+  // Custom tooltip for seller details.
   const CustomTooltip = ({ active, payload }) => {
     if (active && payload && payload.length) {
       const data = payload[0].payload;
@@ -104,8 +101,8 @@ const SellerPerformanceChart = ({ sellerData }) => {
     }
     return null;
   };
-  
-  // If no data, show a message in a Box with fixed height to maintain layout consistency.
+
+  // If no processed data, show a friendly message.
   if (processedData.length === 0) {
     return (
       <Box sx={{ 
@@ -122,7 +119,7 @@ const SellerPerformanceChart = ({ sellerData }) => {
       </Box>
     );
   }
-  
+
   return (
     <Box sx={{ width: '100%', height: '100%' }}>
       <ResponsiveContainer width="100%" height={400}>
@@ -146,7 +143,7 @@ const SellerPerformanceChart = ({ sellerData }) => {
           <ZAxis type="number" dataKey="z" range={dynamicZRange} />
           <Tooltip content={<CustomTooltip />} />
           <Legend />
-          {processedData.map((cluster) => (
+          {processedData.map(cluster => (
             <Scatter
               key={cluster.cluster}
               name={clusterNames[cluster.cluster] || `Cluster ${cluster.cluster}`}
