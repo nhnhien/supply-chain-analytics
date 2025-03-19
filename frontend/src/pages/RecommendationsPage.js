@@ -85,17 +85,25 @@ const RecommendationsPage = ({ data }) => {
     }
   };
   
-  // Format data for bar chart visualization
+  // Format data for bar chart visualization with robust numerical parsing.
   const barChartData = data.inventory.map(item => {
     const category = item.product_category || item.category;
-    const safetyStock = item.safety_stock || 0;
-    const leadTimeDemand = (item.reorder_point || 0) - safetyStock;
+    // Parse safety stock and reorder point as numbers; default to 0 if invalid.
+    const safetyStockRaw = parseFloat(item.safety_stock);
+    const reorderPointRaw = parseFloat(item.reorder_point);
+    const validSafetyStock = isNaN(safetyStockRaw) ? 0 : safetyStockRaw;
+    const validReorderPoint = isNaN(reorderPointRaw) ? 0 : reorderPointRaw;
+    // Calculate leadTimeDemand ensuring it's not negative.
+    const leadTimeDemand = Math.max(validReorderPoint - validSafetyStock, 0);
+    // Parse forecast values and default to 0 if invalid.
+    const forecastRaw = parseFloat(item.next_month_forecast || item.forecast_demand);
+    const nextMonthForecast = isNaN(forecastRaw) ? 0 : forecastRaw;
     
     return {
       name: category,
-      safetyStock: safetyStock,
-      leadTimeDemand: leadTimeDemand > 0 ? leadTimeDemand : 0,
-      nextMonthForecast: item.next_month_forecast || item.forecast_demand || 0
+      safetyStock: validSafetyStock,
+      leadTimeDemand,
+      nextMonthForecast
     };
   });
   
@@ -253,9 +261,12 @@ const RecommendationsPage = ({ data }) => {
                 <TableBody>
                   {data.inventory.map((item, index) => {
                     const category = item.product_category || item.category;
-                    const safetyStock = item.safety_stock || 0;
-                    const reorderPoint = item.reorder_point || 0;
-                    const forecast = item.next_month_forecast || item.forecast_demand || 0;
+                    const safetyStock = parseFloat(item.safety_stock);
+                    const reorderPoint = parseFloat(item.reorder_point);
+                    const validSafetyStock = isNaN(safetyStock) ? 0 : safetyStock;
+                    const validReorderPoint = isNaN(reorderPoint) ? 0 : reorderPoint;
+                    const forecast = parseFloat(item.next_month_forecast || item.forecast_demand);
+                    const validForecast = isNaN(forecast) ? 0 : forecast;
                     const growthRate = item.growth_rate || 0;
                     const priority = item.priority || 
                       (growthRate > 10 ? 'High' : 
@@ -272,9 +283,9 @@ const RecommendationsPage = ({ data }) => {
                       <React.Fragment key={index}>
                         <TableRow sx={{ '& > *': { borderBottom: 'unset' } }}>
                           <TableCell component="th" scope="row">{category}</TableCell>
-                          <TableCell align="right">{new Intl.NumberFormat().format(Math.round(safetyStock))}</TableCell>
-                          <TableCell align="right">{new Intl.NumberFormat().format(Math.round(reorderPoint))}</TableCell>
-                          <TableCell align="right">{new Intl.NumberFormat().format(Math.round(forecast))}</TableCell>
+                          <TableCell align="right">{new Intl.NumberFormat().format(Math.round(validSafetyStock))}</TableCell>
+                          <TableCell align="right">{new Intl.NumberFormat().format(Math.round(validReorderPoint))}</TableCell>
+                          <TableCell align="right">{new Intl.NumberFormat().format(Math.round(validForecast))}</TableCell>
                           <TableCell 
                             align="right"
                             sx={{ color: growthRate > 0 ? 'success.main' : growthRate < 0 ? 'error.main' : 'inherit' }}
@@ -314,16 +325,16 @@ const RecommendationsPage = ({ data }) => {
                                           Inventory Planning
                                         </Typography>
                                         <Typography variant="body2">
-                                          Safety Stock: {new Intl.NumberFormat().format(Math.round(safetyStock))} units
+                                          Safety Stock: {new Intl.NumberFormat().format(Math.round(validSafetyStock))} units
                                         </Typography>
                                         <Typography variant="body2">
-                                          Lead Time Demand: {new Intl.NumberFormat().format(Math.round(reorderPoint - safetyStock))} units
+                                          Lead Time Demand: {new Intl.NumberFormat().format(Math.round(Math.max(validReorderPoint - validSafetyStock, 0)))} units
                                         </Typography>
                                         <Typography variant="body2">
-                                          Reorder Point: {new Intl.NumberFormat().format(Math.round(reorderPoint))} units
+                                          Reorder Point: {new Intl.NumberFormat().format(Math.round(validReorderPoint))} units
                                         </Typography>
                                         <Typography variant="body2">
-                                          Next Month Forecast: {new Intl.NumberFormat().format(Math.round(forecast))} units
+                                          Next Month Forecast: {new Intl.NumberFormat().format(Math.round(validForecast))} units
                                         </Typography>
                                       </CardContent>
                                     </Card>

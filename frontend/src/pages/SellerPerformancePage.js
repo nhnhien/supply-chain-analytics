@@ -20,12 +20,6 @@ import {
   Person as PersonIcon
 } from '@mui/icons-material';
 
-/**
- * Seller Performance Page Component
- * 
- * @param {Object} props Component props
- * @param {Object} props.data Seller performance data
- */
 const SellerPerformancePage = ({ data }) => {
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(10);
@@ -79,21 +73,13 @@ const SellerPerformancePage = ({ data }) => {
     page * rowsPerPage + rowsPerPage
   );
   
-  // Cluster metrics for performance benchmarks
-  const clusterMetrics = [0, 1, 2].map(cluster => {
+  // Only process clusters that are present in the data
+  const clustersToConsider = [0, 1, 2].filter(
+    cluster => sellerData.some(seller => seller.prediction === cluster)
+  );
+  
+  const clusterMetrics = clustersToConsider.map(cluster => {
     const clusteredSellers = sellerData.filter(seller => seller.prediction === cluster);
-    
-    if (clusteredSellers.length === 0) {
-      return {
-        cluster,
-        clusterName: cluster === 0 ? 'High Performers' : cluster === 1 ? 'Average Performers' : 'Low Performers',
-        count: 0,
-        avgProcessingTime: 0,
-        avgDeliveryDays: 0,
-        avgOrderCount: 0,
-        totalSales: 0
-      };
-    }
     
     const avgProcessingTime = clusteredSellers.reduce((sum, seller) => sum + (seller.avg_processing_time || 0), 0) / clusteredSellers.length;
     const avgDeliveryDays = clusteredSellers.reduce((sum, seller) => sum + (seller.avg_delivery_days || 0), 0) / clusteredSellers.length;
@@ -111,16 +97,16 @@ const SellerPerformancePage = ({ data }) => {
     };
   });
   
-  // Calculate percentage of sellers in each cluster
+  // Calculate percentage of sellers in each cluster (guarding against division by zero)
   const totalSellers = sellerData.length;
   const clusterDistribution = clusterMetrics.map(metric => ({
     name: metric.clusterName,
     value: metric.count,
-    percentage: (metric.count / totalSellers) * 100
+    percentage: totalSellers > 0 ? (metric.count / totalSellers) * 100 : 0
   }));
   
   // Metrics for scatter chart
-  const scatterData = [0, 1, 2].map(cluster => ({
+  const scatterData = clustersToConsider.map(cluster => ({
     cluster,
     name: cluster === 0 ? 'High Performers' : cluster === 1 ? 'Average Performers' : 'Low Performers',
     data: sellerData
@@ -144,12 +130,12 @@ const SellerPerformancePage = ({ data }) => {
   // Map performance rating from 1-5 stars
   const getPerformanceRating = (seller) => {
     const cluster = seller.prediction;
-    
     // Base rating on cluster (0: 5 stars, 1: 3 stars, 2: 1 star)
     let baseRating = cluster === 0 ? 5 : cluster === 1 ? 3 : 1;
     
     // Adjust within cluster based on processing time relative to cluster average
-    const clusterAvgTime = clusterMetrics[cluster].avgProcessingTime;
+    const clusterMetric = clusterMetrics.find(metric => metric.cluster === cluster);
+    const clusterAvgTime = clusterMetric ? clusterMetric.avgProcessingTime : 0;
     const sellerTime = seller.avg_processing_time || 0;
     
     const adjustment = clusterAvgTime > 0 
@@ -236,9 +222,7 @@ const SellerPerformancePage = ({ data }) => {
                       <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                     ))}
                   </Pie>
-                  <Tooltip 
-                    formatter={(value) => `${value} sellers`}
-                  />
+                  <Tooltip formatter={(value) => `${value} sellers`} />
                 </PieChart>
               </ResponsiveContainer>
             </Box>
@@ -259,10 +243,7 @@ const SellerPerformancePage = ({ data }) => {
                   margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
                 >
                   <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis 
-                    dataKey="clusterName" 
-                    tick={{ fontSize: 12 }} 
-                  />
+                  <XAxis dataKey="clusterName" tick={{ fontSize: 12 }} />
                   <YAxis yAxisId="left" orientation="left" stroke="#8884d8" />
                   <YAxis yAxisId="right" orientation="right" stroke="#82ca9d" />
                   <Tooltip />
@@ -471,7 +452,7 @@ const SellerPerformancePage = ({ data }) => {
                             Seller Count:
                           </Typography>
                           <Typography variant="body1">
-                            {metric.count} ({((metric.count / totalSellers) * 100).toFixed(1)}%)
+                            {metric.count} ({totalSellers > 0 ? ((metric.count / totalSellers) * 100).toFixed(1) : 0}%)
                           </Typography>
                         </Box>
                         <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>

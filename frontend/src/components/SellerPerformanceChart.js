@@ -19,8 +19,11 @@ const SellerPerformanceChart = ({ sellerData }) => {
     sellerData.forEach(seller => {
       if (!seller) return; // Skip null/undefined sellers
       
-      // Default to cluster 1 (medium) if prediction is missing
-      const cluster = seller.prediction !== undefined && seller.prediction !== null ? seller.prediction : 1;
+      // Validate prediction: if not 0, 1, or 2, default to 1 (medium)
+      let cluster = seller.prediction;
+      if (cluster !== 0 && cluster !== 1 && cluster !== 2) {
+        cluster = 1;
+      }
       
       if (!clusters[cluster]) {
         clusters[cluster] = [];
@@ -61,7 +64,7 @@ const SellerPerformanceChart = ({ sellerData }) => {
     }));
   }, [sellerData]);
   
-  // Colors for each cluster
+  // Colors for each cluster (for clusters 0, 1, and 2)
   const clusterColors = ['#0088FE', '#00C49F', '#FF8042'];
   
   // Names for each cluster
@@ -70,6 +73,22 @@ const SellerPerformanceChart = ({ sellerData }) => {
     1: 'Average Performers',
     2: 'Low Performers'
   };
+  
+  // Compute a dynamic Z-axis range based on the order_count values (z) across all clusters.
+  const dynamicZRange = useMemo(() => {
+    const allZ = processedData.flatMap(cluster => cluster.data.map(d => d.z));
+    if (allZ.length === 0) return [50, 400];
+    const dataMin = Math.min(...allZ);
+    const dataMax = Math.max(...allZ);
+    if (dataMin === dataMax) return [50, 50]; // Uniform values: fixed bubble size
+    // Use a linear mapping so that the minimum bubble size is 50 pixels.
+    // We compute a scale factor such that: scale = (desiredMax - 50) / (dataMax - dataMin)
+    // Then set dynamic max size = 50 + (dataMax - dataMin) * scale.
+    const desiredMaxSize = 400;
+    const scale = (desiredMaxSize - 50) / (dataMax - dataMin);
+    const dynamicMax = 50 + (dataMax - dataMin) * scale;
+    return [50, dynamicMax];
+  }, [processedData]);
   
   // Custom tooltip to display seller details
   const CustomTooltip = ({ active, payload }) => {
@@ -87,12 +106,12 @@ const SellerPerformanceChart = ({ sellerData }) => {
     return null;
   };
   
-  // If no data, show a message in a Box with fixed height/width to match visualization requirements.
+  // If no data, show a message in a Box with fixed height to maintain layout consistency.
   if (processedData.length === 0) {
     return (
       <Box sx={{ 
         width: '100%', 
-        height: 400,  // Fixed height ensures layout consistency
+        height: 400,  
         minHeight: 400,
         display: 'flex', 
         alignItems: 'center', 
@@ -125,7 +144,7 @@ const SellerPerformanceChart = ({ sellerData }) => {
             unit=" days"
             label={{ value: 'Processing Time (days)', angle: -90, position: 'insideLeft', offset: 0 }}
           />
-          <ZAxis type="number" dataKey="z" range={[50, 400]} />
+          <ZAxis type="number" dataKey="z" range={dynamicZRange} />
           <Tooltip content={<CustomTooltip />} />
           <Legend />
           {processedData.map((cluster) => (

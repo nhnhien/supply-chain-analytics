@@ -31,7 +31,12 @@ export async function loadCsvData(filePath, mockDataGenerator) {
           if (value === "" || value === undefined || value === null) {
             return null;
           }
+          // Handle special strings indicating missing values
           if (value === "N/A" || value === "n/a" || value === "NA") {
+            return null;
+          }
+          // Handle edge cases for Infinity values
+          if (value === "Infinity" || value === "-Infinity") {
             return null;
           }
           if (field === "arima_params" && typeof value === "string") {
@@ -58,9 +63,8 @@ export async function loadCsvData(filePath, mockDataGenerator) {
               for (const field of numericFields) {
                 if (field in row && row[field] !== null) {
                   const parsed = parseFloat(row[field]);
-                  if (!isNaN(parsed)) {
-                    row[field] = parsed;
-                  }
+                  // Default to 0 if parsed value is NaN or not finite (handles Infinity cases)
+                  row[field] = (!isNaN(parsed) && isFinite(parsed)) ? parsed : 0;
                 }
               }
               if (row.date && typeof row.date === 'string') {
@@ -73,13 +77,12 @@ export async function loadCsvData(filePath, mockDataGenerator) {
                 }
               }
               if (!row.date && (row.order_year || row.year) && (row.order_month || row.month)) {
-                const year = parseInt(row.order_year || row.year);
-                const month = parseInt(row.order_month || row.month) - 1;
-                if (!isNaN(year) && !isNaN(month)) {
-                  row.date = new Date(year, month, 1);
-                }
+                row.date = new Date(
+                  parseInt(row.order_year || row.year),
+                  parseInt(row.order_month || row.month) - 1,
+                  1
+                );
               }
-
               return row;
             });
           resolve(processedData);

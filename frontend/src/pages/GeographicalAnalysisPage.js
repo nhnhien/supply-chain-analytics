@@ -9,12 +9,6 @@ import {
   Legend, ResponsiveContainer, Cell, PieChart, Pie
 } from 'recharts';
 
-/**
- * Geographical Analysis Page Component
- * 
- * @param {Object} props Component props
- * @param {Object} props.data Geography data
- */
 const GeographicalAnalysisPage = ({ data }) => {
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(10);
@@ -55,6 +49,7 @@ const GeographicalAnalysisPage = ({ data }) => {
   
   // Get top 10 states by order count for visualization
   const topStates = sortedStates.slice(0, 10);
+  const topPerformingRegion = topStates.length > 0 ? topStates[0] : null;
   
   // Calculate total orders
   const totalOrders = sortedStates.reduce((sum, state) => sum + (state.order_count || 0), 0);
@@ -65,29 +60,34 @@ const GeographicalAnalysisPage = ({ data }) => {
   
   sortedStates.forEach((state, index) => {
     if (index < 5) {
-      // Include top 5 states individually
       pieData.push({
         name: state.customer_state,
         value: state.order_count || 0,
-        percentage: ((state.order_count || 0) / totalOrders) * 100
+        percentage: totalOrders > 0 ? ((state.order_count || 0) / totalOrders) * 100 : 0
       });
     } else {
-      // Group the rest as "Others"
       otherOrders += (state.order_count || 0);
     }
   });
   
-  // Add "Others" category if there are more than 5 states
   if (sortedStates.length > 5) {
     pieData.push({
       name: 'Others',
       value: otherOrders,
-      percentage: (otherOrders / totalOrders) * 100
+      percentage: totalOrders > 0 ? (otherOrders / totalOrders) * 100 : 0
     });
   }
   
   // Colors for charts
   const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884D8', '#AAAAAA'];
+  
+  // Compute fastest delivery region safely
+  const sortedByDelivery = [...sortedStates].sort((a, b) => (a.avg_delivery_days || 0) - (b.avg_delivery_days || 0));
+  const fastestRegion = sortedByDelivery.length > 0 ? sortedByDelivery[0] : null;
+  
+  // Compute highest value region safely
+  const sortedBySales = [...sortedStates].sort((a, b) => (b.total_sales || 0) - (a.total_sales || 0));
+  const highestValueRegion = sortedBySales.length > 0 ? sortedBySales[0] : null;
   
   return (
     <Box>
@@ -183,7 +183,6 @@ const GeographicalAnalysisPage = ({ data }) => {
                 </TableHead>
                 <TableBody>
                   {visibleRows.map((state) => {
-                    // Find top category for this state if available
                     const topCategory = data.topCategoryByState && 
                       data.topCategoryByState.find(item => item.customer_state === state.customer_state);
                     
@@ -252,13 +251,10 @@ const GeographicalAnalysisPage = ({ data }) => {
                       Top Performing Region
                     </Typography>
                     <Typography variant="body1">
-                      {topStates[0]?.customer_state || 'N/A'}
+                      {topPerformingRegion ? topPerformingRegion.customer_state : 'N/A'}
                     </Typography>
                     <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-                      {topStates[0] ? 
-                        `${new Intl.NumberFormat().format(topStates[0].order_count || 0)} orders` : 
-                        'No data available'
-                      }
+                      {topPerformingRegion ? `${new Intl.NumberFormat().format(topPerformingRegion.order_count || 0)} orders` : 'No data available'}
                     </Typography>
                   </CardContent>
                 </Card>
@@ -270,17 +266,13 @@ const GeographicalAnalysisPage = ({ data }) => {
                     <Typography variant="h6" gutterBottom>
                       Fastest Delivery Region
                     </Typography>
-                    {sortedStates.length > 0 ? (
+                    {fastestRegion ? (
                       <>
                         <Typography variant="body1">
-                          {sortedStates.sort((a, b) => 
-                            (a.avg_delivery_days || 0) - (b.avg_delivery_days || 0)
-                          )[0].customer_state}
+                          {fastestRegion.customer_state}
                         </Typography>
                         <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-                          {(sortedStates.sort((a, b) => 
-                            (a.avg_delivery_days || 0) - (b.avg_delivery_days || 0)
-                          )[0].avg_delivery_days || 0).toFixed(1)} days average delivery
+                          {(fastestRegion.avg_delivery_days || 0).toFixed(1)} days average delivery
                         </Typography>
                       </>
                     ) : (
@@ -296,19 +288,13 @@ const GeographicalAnalysisPage = ({ data }) => {
                     <Typography variant="h6" gutterBottom>
                       Highest Value Region
                     </Typography>
-                    {sortedStates.length > 0 ? (
+                    {highestValueRegion ? (
                       <>
                         <Typography variant="body1">
-                          {sortedStates.sort((a, b) => 
-                            (b.total_sales || 0) - (a.total_sales || 0)
-                          )[0].customer_state}
+                          {highestValueRegion.customer_state}
                         </Typography>
                         <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-                          ${new Intl.NumberFormat().format(
-                            sortedStates.sort((a, b) => 
-                              (b.total_sales || 0) - (a.total_sales || 0)
-                            )[0].total_sales || 0
-                          )} total sales
+                          ${new Intl.NumberFormat().format(highestValueRegion.total_sales || 0)} total sales
                         </Typography>
                       </>
                     ) : (

@@ -1,9 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Link } from 'react-router-dom';
 import { 
-  AppBar, Toolbar, Typography, Container, Grid, Paper, 
-  Box, Drawer, List, ListItem, ListItemIcon, ListItemText,
-  CssBaseline, IconButton, Divider, Alert
+  AppBar, Toolbar, Typography, Container, Box, Drawer, List, ListItem, ListItemIcon, ListItemText,
+  CssBaseline, IconButton, Divider, Alert, Button 
 } from '@mui/material';
 import { 
   Dashboard as DashboardIcon,
@@ -31,35 +30,39 @@ function App() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [dataWarnings, setDataWarnings] = useState([]);
-  
-  useEffect(() => {
-    async function fetchData() {
-      try {
-        setLoading(true);
-        const data = await loadDashboardData();
-        
-        // Check for data warnings received from the API
-        if (data.dataWarnings && data.dataWarnings.length > 0) {
-          setDataWarnings(data.dataWarnings);
-          console.warn("Data quality warnings:", data.dataWarnings);
-        }
-        
-        setDashboardData(data);
-        setLoading(false);
-      } catch (err) {
-        console.error("Error loading dashboard data:", err);
-        setError("Failed to load dashboard data. Please try again later.");
-        setLoading(false);
+
+  // Define a fetchData function that can be reused (e.g., for retrying)
+  const fetchData = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      const data = await loadDashboardData();
+
+      // Check for data warnings received from the API
+      if (data.dataWarnings && data.dataWarnings.length > 0) {
+        setDataWarnings(data.dataWarnings);
+        console.warn("Data quality warnings:", data.dataWarnings);
       }
+      
+      setDashboardData(data);
+      setLoading(false);
+    } catch (err) {
+      console.error("Error loading dashboard data:", err);
+      const errorDetail = err?.message ? `Error: ${err.message}.` : "";
+      const troubleshootingTip = "Please check your network connection or try refreshing the page.";
+      setError(`Failed to load dashboard data. ${errorDetail} ${troubleshootingTip}`);
+      setLoading(false);
     }
-    
+  };
+
+  useEffect(() => {
     fetchData();
   }, []);
-  
+
   const toggleDrawer = () => {
     setDrawerOpen(!drawerOpen);
   };
-  
+
   const drawerItems = [
     { text: 'Dashboard', icon: <DashboardIcon />, path: '/' },
     { text: 'Demand Forecast', icon: <TimelineIcon />, path: '/forecast' },
@@ -68,7 +71,7 @@ function App() {
     { text: 'Geographical Analysis', icon: <MapIcon />, path: '/geography' },
     { text: 'Recommendations', icon: <OrderIcon />, path: '/recommendations' },
   ];
-  
+
   const drawer = (
     <div>
       <Toolbar>
@@ -89,7 +92,7 @@ function App() {
       </List>
     </div>
   );
-  
+
   if (loading) {
     return (
       <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
@@ -97,16 +100,19 @@ function App() {
       </Box>
     );
   }
-  
+
   if (error) {
     return (
-      <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', flexDirection: 'column', p: 3 }}>
+      <Box sx={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', height: '100vh', p: 3 }}>
         <Typography variant="h5" color="error" gutterBottom>Error</Typography>
-        <Typography>{error}</Typography>
+        <Typography sx={{ mb: 2 }}>{error}</Typography>
+        <Button variant="contained" color="primary" onClick={fetchData}>
+          Retry
+        </Button>
       </Box>
     );
   }
-  
+
   // Create safe empty objects for each data section to prevent null reference errors
   const safeData = dashboardData || {};
   const safeForecasts = safeData.forecasts || {};
@@ -114,7 +120,7 @@ function App() {
   const safeSellerPerformance = safeData.sellerPerformance || { clusters: [] };
   const safeGeography = safeData.geography || { stateMetrics: [] };
   const safeRecommendations = safeData.recommendations || { inventory: [] };
-  
+
   return (
     <Router>
       <Box sx={{ display: 'flex' }}>

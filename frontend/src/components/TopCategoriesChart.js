@@ -12,11 +12,15 @@ import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend } from 'recha
 const TopCategoriesChart = ({ categories, categoryData }) => {
   // Calculate total demand for each category
   const chartData = useMemo(() => {
-    if (!categories || !categoryData) return [];
+    // Ensure categories is a valid array and categoryData is provided
+    if (!Array.isArray(categories) || !categoryData) return [];
     
     return categories.map(category => {
-      const categoryRows = categoryData[category] || [];
-      const totalDemand = categoryRows.reduce((sum, row) => sum + (row.count || row.order_count || 0), 0);
+      // Ensure the category data is an array; otherwise, default to an empty array.
+      const categoryRows = Array.isArray(categoryData[category]) ? categoryData[category] : [];
+      const totalDemand = categoryRows.reduce((sum, row) => {
+        return sum + (row.count || row.order_count || 0);
+      }, 0);
       
       return {
         name: category,
@@ -46,9 +50,7 @@ const TopCategoriesChart = ({ categories, categoryData }) => {
               <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
             ))}
           </Pie>
-          <Tooltip
-            formatter={(value) => new Intl.NumberFormat().format(value)}
-          />
+          <Tooltip formatter={(value) => new Intl.NumberFormat().format(value)} />
           <Legend layout="vertical" verticalAlign="bottom" align="center" />
         </PieChart>
       </ResponsiveContainer>

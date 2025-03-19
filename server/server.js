@@ -1,3 +1,4 @@
+require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const fs = require('fs');
@@ -13,7 +14,7 @@ const OUTPUT_DIR = process.env.OUTPUT_DIR || path.join(__dirname, '../output');
 const { MongoClient, ObjectId } = require('mongodb');
 
 // MongoDB connection string from environment variable or use default
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/';
+const MONGODB_URI = process.env.MONGODB_URI
 const DB_NAME = process.env.DB_NAME || 'supply_chain_analytics';
 
 // MongoDB connection

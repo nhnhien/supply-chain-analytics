@@ -19,12 +19,11 @@ import KPICard from '../components/KPICard';
 import TopCategoriesChart from '../components/TopCategoriesChart';
 import SellerPerformanceChart from '../components/SellerPerformanceChart';
 
-// Dummy MonthlyProfitChart component with corrected useEffect hook
+// Placeholder component for Monthly Profit Chart
 const MonthlyProfitChart = ({ data }) => {
   useEffect(() => {
-    // Example processing for monthly profit chart
     console.log("MonthlyProfitChart useEffect triggered");
-  }, []); // Fixed: closing parenthesis added here
+  }, []);
   
   return <div>Monthly Profit Chart Placeholder</div>;
 };
@@ -49,25 +48,20 @@ const DashboardPage = ({ data }) => {
     return <Typography>No KPI data available</Typography>;
   }
   
-  // Refactored processingTime with clearer logic
-  let processingTimeValue = '0.5';
-  if (kpis.avg_processing_time !== undefined) {
-    processingTimeValue = kpis.avg_processing_time.toFixed(1);
-  } else if (data && data.performance && data.performance.metrics && data.performance.metrics.avg_processing_time !== undefined) {
-    processingTimeValue = data.performance.metrics.avg_processing_time.toFixed(1);
-  }
+  // Simplified processingTime calculation using optional chaining
+  const processingTimeValue = kpis.avg_processing_time?.toFixed(1) ||
+                                data?.performance?.metrics?.avg_processing_time?.toFixed(1) ||
+                                '0.5';
   
   const formattedKPIs = {
     processingTime: processingTimeValue,
     forecastGrowth: (() => {
-      // Calculate average growth rate from all forecasts
       if (forecasts && forecasts.forecastReport && forecasts.forecastReport.length > 0) {
         const validGrowthRates = forecasts.forecastReport
-          .filter(f => f.growth_rate !== null && f.growth_rate !== undefined)
+          .filter(f => f.growth_rate != null)
           .map(f => parseFloat(f.growth_rate));
         
         if (validGrowthRates.length > 0) {
-          // Calculate average growth rate, avoiding extreme values
           const sumGrowth = validGrowthRates.reduce((sum, rate) => {
             const clippedRate = Math.max(Math.min(rate, 100), -80);
             return sum + clippedRate;
@@ -79,9 +73,7 @@ const DashboardPage = ({ data }) => {
     })(),
     onTimeDelivery: kpis.on_time_delivery !== undefined 
       ? kpis.on_time_delivery.toFixed(1) 
-      : data && data.performance && data.performance.metrics && data.performance.metrics.on_time_delivery_rate !== undefined
-        ? data.performance.metrics.on_time_delivery_rate.toFixed(1)
-        : '85.0',
+      : data?.performance?.metrics?.on_time_delivery_rate?.toFixed(1) || '85.0',
     perfectOrderRate: kpis.perfect_order_rate !== undefined 
       ? kpis.perfect_order_rate.toFixed(1) 
       : kpis.on_time_delivery !== undefined 
@@ -116,7 +108,7 @@ const DashboardPage = ({ data }) => {
       {/* KPI Summary Cards */}
       <Grid container spacing={3} sx={{ mb: 4 }}>
         <Grid item xs={12} sm={6} md={4} lg={2}>
-        <KPICard 
+          <KPICard 
             title="Processing Time"
             value={`${formattedKPIs.processingTime} days`}
             icon={<ShippingIcon />}
@@ -205,7 +197,7 @@ const DashboardPage = ({ data }) => {
                     key={category}
                     type="monotone" 
                     dataKey="count"
-                    data={categories.categoryData && categories.categoryData[category] ? categories.categoryData[category] : []}
+                    data={categories.categoryData?.[category] || []}
                     name={category}
                     stroke={['#8884d8', '#82ca9d', '#ffc658', '#ff8042', '#a4de6c'][index % 5]}
                     activeDot={{ r: 8 }}
@@ -294,7 +286,7 @@ const DashboardPage = ({ data }) => {
         </Grid>
       </Grid>
       
-      {/* Include MonthlyProfitChart to demonstrate fixed useEffect hook */}
+      {/* Monthly Profit Chart Placeholder */}
       <MonthlyProfitChart data={[]} />
       
     </Box>
