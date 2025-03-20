@@ -178,6 +178,7 @@ def run_pandas_analysis(args):
         os.path.join(args.output_dir, 'top_categories.csv'), index=False
     )
     
+
     print("Running time series forecasting...");
     forecaster = DemandForecaster(os.path.join(args.output_dir, 'monthly_demand.csv'))
     forecaster.preprocess_forecast_data()
@@ -188,39 +189,136 @@ def run_pandas_analysis(args):
         print("Including seasonality in the model")
         forecaster.seasonal = True
         forecaster.seasonal_period = 12
+        
+    # Run forecasting with progress tracking
+    print("Starting forecasts for all categories...")
     forecasts = forecaster.run_all_forecasts(top_n=args.top_n, periods=args.forecast_periods)
-    
     forecast_report = forecaster.generate_forecast_report(os.path.join(args.output_dir, 'forecast_report.csv'))
     
-    # NEW: Generate forecast visualization.
-    print("Generating forecast visualization...");
+    # Generate only essential visualizations for the dashboard
+    print("Generating essential forecast visualizations...")
     visualizer = SupplyChainVisualizer(output_dir=args.output_dir)
-    # If visualize_forecasts is not defined, provide a basic implementation.
-    if not hasattr(visualizer, 'visualize_forecasts'):
-        def visualize_forecasts(forecast_report):
-            try:
-                # Check if forecast_report is a DataFrame with required columns.
-                if hasattr(forecast_report, 'columns') and 'date' in forecast_report.columns and 'forecast' in forecast_report.columns:
-                    plt.figure(figsize=(10, 6))
-                    plt.plot(forecast_report['date'], forecast_report['forecast'], label='Forecast')
-                    plt.xlabel('Date')
-                    plt.ylabel('Forecast Demand')
-                    plt.title('Forecast Visualization')
-                    plt.legend()
-                    output_path = os.path.join(args.output_dir, 'forecast_visualization.png')
-                    plt.savefig(output_path)
-                    plt.close()
-                    print(f"Forecast visualization saved to {output_path}")
-                else:
-                    print("Forecast report does not contain expected columns for visualization.")
-            except Exception as e:
-                print(f"Error generating forecast visualization: {e}")
-        visualizer.visualize_forecasts = visualize_forecasts
 
+    # Skip individual category visualizations since they create too many files
+    # and focus only on aggregate visualizations needed for the dashboard
+
+    # Create comparative visualization of forecast accuracy
     try:
-        visualizer.visualize_forecasts(forecast_report)
+        # Extract forecast performance metrics
+        mape_data = []
+        for _, row in forecast_report.iterrows():
+            if pd.notna(row.get('mape')):
+                mape_data.append({
+                    'category': row['category'],
+                    'mape': min(float(row['mape']), 100),  # Cap at 100% for visualization
+                    'color': '#4CAF50' if float(row['mape']) < 15 else 
+                            '#FF9800' if float(row['mape']) < 30 else '#F44336'
+                })
+        
+        if mape_data:
+            # Sort by MAPE (increasing)
+            mape_df = pd.DataFrame(mape_data).sort_values('mape')
+            
+            # Plot model performance
+            plt.figure(figsize=(14, 8))
+            bars = plt.bar(
+                mape_df['category'], 
+                mape_df['mape'],
+                color=mape_df['color']
+            )
+            plt.axhline(y=20, color='green', linestyle='--', alpha=0.7)
+            plt.axhline(y=50, color='red', linestyle='--', alpha=0.7)
+            plt.title('Forecast Accuracy by Category (MAPE)', fontsize=16)
+            plt.xlabel('Product Category', fontsize=14)
+            plt.ylabel('Mean Absolute Percentage Error (%)', fontsize=14)
+            plt.xticks(rotation=45, ha='right')
+            plt.grid(axis='y', alpha=0.3)
+            plt.tight_layout()
+            plt.savefig(os.path.join(args.output_dir, 'forecast_accuracy.png'), dpi=300)
+            plt.close()
+            
+            print("Created forecast accuracy visualization")
     except Exception as e:
-        print(f"Error generating forecast visualization: {e}")
+        print(f"Warning: Could not create forecast accuracy visualization: {e}")
+
+    # Create comparative visualization of forecasted growth rates
+    try:
+        growth_data = []
+        for _, row in forecast_report.iterrows():
+            if pd.notna(row.get('growth_rate')):
+                growth_rate = float(row['growth_rate'])
+                # Apply reasonable bounds for visualization
+                growth_rate = max(min(growth_rate, 60), -50)
+                growth_data.append({
+                    'category': row['category'],
+                    'growth_rate': growth_rate,
+                    'color': '#4CAF50' if growth_rate > 5 else 
+                            '#FF9800' if growth_rate > -5 else '#F44336'
+                })
+        
+        if growth_data:
+            # Sort by growth rate (decreasing)
+            growth_df = pd.DataFrame(growth_data).sort_values('growth_rate', ascending=False)
+            
+            # Plot growth rates
+            plt.figure(figsize=(14, 8))
+            bars = plt.bar(
+                growth_df['category'], 
+                growth_df['growth_rate'],
+                color=growth_df['color']
+            )
+            plt.axhline(y=0, color='black', linestyle='-', alpha=0.3)
+            plt.title('Forecasted Growth Rate by Category', fontsize=16)
+            plt.xlabel('Product Category', fontsize=14)
+            plt.ylabel('Growth Rate (%)', fontsize=14)
+            plt.xticks(rotation=45, ha='right')
+            plt.grid(axis='y', alpha=0.3)
+            plt.tight_layout()
+            plt.savefig(os.path.join(args.output_dir, 'forecast_growth_rates.png'), dpi=300)
+            plt.close()
+            
+            print("Created growth rate visualization")
+    except Exception as e:
+        print(f"Warning: Could not create growth rate visualization: {e}")
+        
+    # Create overall demand trends visualization
+    try:
+        # Aggregate monthly demand across top categories
+        agg_demand = monthly_demand.copy()
+        agg_demand['year_month'] = pd.to_datetime(
+            agg_demand['order_year'].astype(str) + '-' + 
+            agg_demand['order_month'].astype(str).str.zfill(2) + '-01'
+        )
+        
+        top_cats = monthly_demand['product_category_name'].value_counts().nlargest(5).index.tolist()
+        
+        plt.figure(figsize=(14, 8))
+        
+        for category in top_cats:
+            cat_data = agg_demand[agg_demand['product_category_name'] == category]
+            if len(cat_data) > 0:
+                cat_data = cat_data.sort_values('year_month')
+                plt.plot(
+                    cat_data['year_month'], 
+                    cat_data['count'],
+                    marker='o',
+                    linewidth=2,
+                    label=category
+                )
+        
+        plt.title('Monthly Demand Trends for Top Categories', fontsize=16)
+        plt.xlabel('Month', fontsize=14)
+        plt.ylabel('Order Count', fontsize=14)
+        plt.legend(fontsize=12)
+        plt.grid(True, alpha=0.3)
+        plt.xticks(rotation=45)
+        plt.tight_layout()
+        plt.savefig(os.path.join(args.output_dir, 'demand_trends.png'), dpi=300)
+        plt.close()
+        
+        print("Created demand trends visualization")
+    except Exception as e:
+        print(f"Warning: Could not create demand trends visualization: {e}")
     
     print("Analyzing seller performance...");
     seller_performance = (supply_chain.groupby('seller_id')
