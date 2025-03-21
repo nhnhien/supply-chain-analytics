@@ -49,10 +49,14 @@ class SupplierAnalyzer:
             if col != 'seller_id' and pd.api.types.is_numeric_dtype(self.data[col]):
                 self.data[col] = self.data[col].fillna(self.data[col].median())
         
-        # Winsorize extreme total_sales at 99th percentile
+        # Winsorize total_sales at 99th percentile
         cap = self.data['total_sales'].quantile(0.99)
         self.data['total_sales'] = self.data['total_sales'].clip(upper=cap)
-        print(f"Capped extreme seller sales at {cap:.2f}")
+        print(f"Winsorized extreme seller sales at {cap:.2f}")
+        
+        # Apply log transformation to highly skewed features
+        self.data['log_total_sales'] = np.log1p(self.data['total_sales'])
+        self.data['log_order_count'] = np.log1p(self.data['order_count'])
         
         # Create additional clustering features
         if 'avg_order_value' not in self.data.columns:
@@ -66,12 +70,18 @@ class SupplierAnalyzer:
             self.data['shipping_ratio'] = (self.data['shipping_costs'] / self.data['total_sales'] * 100).replace([np.inf, -np.inf], np.nan)
             self.data['shipping_ratio'] = self.data['shipping_ratio'].fillna(self.data['shipping_ratio'].median())
         
+        # Balance the feature set to ensure we don't over-index on sales/revenue
         self.features = [
-            'order_count', 'avg_processing_time', 'avg_delivery_days',
-            'total_sales', 'avg_order_value'
+            'log_order_count',          # Using log-transformed order count
+            'log_total_sales',          # Using log-transformed sales
+            'avg_processing_time',      # Lower is better
+            'avg_delivery_days',        # Lower is better
+            'avg_order_value'           # Higher is better
         ]
+        
         if 'on_time_delivery_rate' in self.data.columns:
             self.features.append('on_time_delivery_rate')
+        
         if 'shipping_ratio' in self.data.columns:
             self.features.append('shipping_ratio')
         
@@ -143,18 +153,27 @@ class SupplierAnalyzer:
             columns=self.features
         )
         
-        # Calculate seller scores using normalized performance metrics
+        # Calculate seller scores using normalized performance metrics with proper weighting
+        # Lower is better for processing_time and delivery_days, so we invert these
         self.data['score'] = (
-            (self.data['order_count'] / self.data['order_count'].max()) * 20 +
-            (self.data['total_sales'] / self.data['total_sales'].max()) * 30 +
-            (1 - (self.data['avg_processing_time'] / self.data['avg_processing_time'].max())) * 25
+            # Order count and sales contribute 40% 
+            (self.data['log_order_count'] / self.data['log_order_count'].max()) * 15 +
+            (self.data['log_total_sales'] / self.data['log_total_sales'].max()) * 25 +
+            # Processing time and delivery contribute 40%
+            (1 - (self.data['avg_processing_time'] / self.data['avg_processing_time'].max())) * 20 +
+            (1 - (self.data['avg_delivery_days'] / self.data['avg_delivery_days'].max())) * 20
         )
-        if 'on_time_delivery_rate' in self.data.columns:
-            self.data['score'] += (self.data['on_time_delivery_rate'] / 100) * 25
-        else:
-            self.data['score'] += (1 - (self.data['avg_delivery_days'] / self.data['avg_delivery_days'].max())) * 25
         
-        # Use quantile thresholds to assign performance labels
+        # Add on_time_delivery to score if available (20%)
+        if 'on_time_delivery_rate' in self.data.columns:
+            self.data['score'] += (self.data['on_time_delivery_rate'] / 100) * 20
+        else:
+            # If on_time_delivery not available, increase weight of processing time
+            self.data['score'] += (1 - (self.data['avg_processing_time'] / self.data['avg_processing_time'].max())) * 10
+            self.data['score'] += (1 - (self.data['avg_delivery_days'] / self.data['avg_delivery_days'].max())) * 10
+            
+        # Get the true performance clusters based on score, not K-means
+        # This ensures high score = high performance regardless of K-means results
         high_threshold = self.data['score'].quantile(0.70)
         low_threshold = self.data['score'].quantile(0.30)
         self.data['performance'] = 'Medium'
@@ -187,6 +206,15 @@ class SupplierAnalyzer:
             {'High': 0, 'Medium': 1, 'Low': 2}
         )
         interpretation = interpretation.sort_values('performance_order').drop('performance_order', axis=1)
+        
+        # Log performance metrics to validate the clustering
+        print("\nCluster interpretation:")
+        for _, row in interpretation.iterrows():
+            print(f"{row['performance']} Performers (Cluster {row['cluster']}): {row['count']} sellers ({row['percentage']:.1f}%)")
+            print(f"  Average Sales: ${row['avg_sales']:.2f}")
+            print(f"  Average Processing Time: {row['avg_processing_time']:.2f} days")
+            print(f"  Average Order Count: {row['avg_order_count']:.2f}")
+            print()
         
         return self.data, interpretation
     
