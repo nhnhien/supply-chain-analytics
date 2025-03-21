@@ -20,26 +20,21 @@ import TopCategoriesChart from '../components/TopCategoriesChart';
 import SellerPerformanceChart from '../components/SellerPerformanceChart';
 
 const DashboardPage = ({ data }) => {
-  if (!data) {
-    return <Typography>No dashboard data available</Typography>;
-  }
-  
-  // Destructure with default values to prevent undefined errors
-  const { 
-    demandData = [], 
-    categories = { topCategories: [], categoryData: {} }, 
-    forecasts = { performanceMetrics: [] }, 
-    sellerPerformance = { clusters: [] }, 
-    kpis = {}, 
-    recommendations = { inventory: [] } 
-  } = data;
-  
-  if (!kpis) {
-    return <Typography>No KPI data available</Typography>;
-  }
-  
-  // Move complex KPI calculations into useMemo to avoid excessive re-rendering.
+  // Always define this regardless of data existence (solves the React Hook conditional usage error)
   const formattedKPIs = useMemo(() => {
+    if (!data || !data.kpis) {
+      return {
+        processingTime: '0.5',
+        forecastGrowth: '0.0',
+        onTimeDelivery: '85.0',
+        perfectOrderRate: '75.0',
+        inventoryTurnover: '8.0',
+        totalDemand: 'N/A'
+      };
+    }
+
+    const kpis = data.kpis;
+    
     const processingTimeValue = kpis.avg_processing_time?.toFixed(1) ||
                                 data?.performance?.metrics?.avg_processing_time?.toFixed(1) ||
                                 '0.5';
@@ -47,8 +42,8 @@ const DashboardPage = ({ data }) => {
     return {
       processingTime: processingTimeValue,
       forecastGrowth: (() => {
-        if (forecasts && forecasts.forecastReport && forecasts.forecastReport.length > 0) {
-          const validGrowthRates = forecasts.forecastReport
+        if (data.forecasts && data.forecasts.forecastReport && data.forecasts.forecastReport.length > 0) {
+          const validGrowthRates = data.forecasts.forecastReport
             .filter(f => f.growth_rate != null)
             .map(f => parseFloat(f.growth_rate));
           
@@ -77,8 +72,8 @@ const DashboardPage = ({ data }) => {
         if (kpis.total_demand !== undefined) {
           return new Intl.NumberFormat().format(kpis.total_demand);
         }
-        if (demandData && Array.isArray(demandData)) {
-          const totalDemand = demandData.reduce((sum, row) => {
+        if (data.demandData && Array.isArray(data.demandData)) {
+          const totalDemand = data.demandData.reduce((sum, row) => {
             return sum + (parseFloat(row.count || row.order_count || 0) || 0);
           }, 0);
           return new Intl.NumberFormat().format(totalDemand);
@@ -89,7 +84,20 @@ const DashboardPage = ({ data }) => {
         return 'N/A';
       })()
     };
-  }, [kpis, forecasts, demandData, data]);
+  }, [data]);
+
+  if (!data) {
+    return <Typography>No dashboard data available</Typography>;
+  }
+  
+  // Destructure with default values to prevent undefined errors
+  const { 
+    demandData = [], 
+    categories = { topCategories: [], categoryData: {} }, 
+    forecasts = { performanceMetrics: [] }, 
+    sellerPerformance = { clusters: [] }, 
+    recommendations = { inventory: [] } 
+  } = data;
 
   return (
     <Box>
@@ -105,7 +113,7 @@ const DashboardPage = ({ data }) => {
             value={`${formattedKPIs.processingTime} days`}
             icon={<ShippingIcon />}
             color="#1976d2"
-            isEstimated={kpis.estimated_fields && kpis.estimated_fields.includes('avg_processing_time')}
+            isEstimated={data.kpis?.estimated_fields && data.kpis.estimated_fields.includes('avg_processing_time')}
           />
         </Grid>
         <Grid item xs={12} sm={6} md={4} lg={2}>
@@ -209,6 +217,7 @@ const DashboardPage = ({ data }) => {
             <TopCategoriesChart 
               categories={categories.topCategories} 
               categoryData={categories.categoryData}
+              chartType="bar"
             />
           </Paper>
         </Grid>

@@ -1,6 +1,6 @@
 import React, { useMemo } from 'react';
 import { Box, Typography } from '@mui/material';
-import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend } from 'recharts';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, Legend } from 'recharts';
 
 /**
  * Top Categories Chart Component
@@ -8,8 +8,9 @@ import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend } from 'recha
  * @param {Object} props Component props
  * @param {Array} props.categories Array of category names
  * @param {Object} props.categoryData Object with category data, where each key corresponds to a category name and its value is an array of data rows.
+ * @param {String} props.chartType Type of chart to display ('pie' or 'bar', defaults to 'bar')
  */
-const TopCategoriesChart = ({ categories, categoryData }) => {
+const TopCategoriesChart = ({ categories, categoryData, chartType = 'bar' }) => {
   // Calculate total demand for each category with robust error handling.
   const chartData = useMemo(() => {
     // Ensure categories is a valid array and categoryData is a non-null object.
@@ -29,7 +30,7 @@ const TopCategoriesChart = ({ categories, categoryData }) => {
         name: category,
         value: totalDemand
       };
-    });
+    }).sort((a, b) => b.value - a.value); // Sort by value in descending order for bar chart
   }, [categories, categoryData]);
 
   // Compute the sum of all demand values.
@@ -46,30 +47,40 @@ const TopCategoriesChart = ({ categories, categoryData }) => {
     );
   }
 
-  // Colors for the pie chart
-  const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#A4DE6C'];
+  // Colors for the chart
+  const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#A4DE6C', '#8884D8', '#82CA9D'];
   
   return (
     <Box sx={{ width: '100%', height: '100%' }}>
       <ResponsiveContainer width="100%" height="100%">
-        <PieChart>
-          <Pie
-            data={chartData}
-            cx="50%"
-            cy="50%"
-            labelLine={false}
-            outerRadius={80}
+        <BarChart
+          data={chartData}
+          layout="vertical"
+          margin={{ top: 5, right: 30, left: 80, bottom: 5 }}
+        >
+          <CartesianGrid strokeDasharray="3 3" />
+          <XAxis type="number" />
+          <YAxis 
+            type="category" 
+            dataKey="name" 
+            tick={{ fontSize: 12 }}
+            width={80}
+          />
+          <Tooltip 
+            formatter={(value) => new Intl.NumberFormat().format(value)} 
+            labelFormatter={(name) => `Category: ${name}`}
+          />
+          <Legend />
+          <Bar 
+            dataKey="value" 
+            name="Demand" 
             fill="#8884d8"
-            dataKey="value"
-            label={({ name, percent }) => `${name} (${(percent * 100).toFixed(0)}%)`}
           >
             {chartData.map((entry, index) => (
               <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
             ))}
-          </Pie>
-          <Tooltip formatter={(value) => new Intl.NumberFormat().format(value)} />
-          <Legend layout="vertical" verticalAlign="bottom" align="center" />
-        </PieChart>
+          </Bar>
+        </BarChart>
       </ResponsiveContainer>
     </Box>
   );
