@@ -29,6 +29,11 @@ const KPICard = ({ title, value, icon, color = "#1976d2", trend = null, isEstima
                 {trend !== 'flat' && 'vs. last period'}
               </Typography>
             )}
+            {title === "Forecast Growth" && (
+              <Typography variant="caption" color="text.secondary" display="block">
+                Projected future trend
+              </Typography>
+            )}
           </Box>
           <Avatar 
             sx={{ 

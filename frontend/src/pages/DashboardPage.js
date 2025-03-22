@@ -164,7 +164,7 @@ const DashboardPage = ({ data }) => {
         <Grid item xs={12} lg={8}>
           <Paper elevation={2} sx={{ p: 2, display: 'flex', flexDirection: 'column', height: 360 }}>
             <Typography component="h2" variant="h6" color="primary" gutterBottom>
-              Monthly Demand Trends
+            Historical Monthly Demand (2017-2018)
             </Typography>
             <ResponsiveContainer width="100%" height="100%">
               <LineChart

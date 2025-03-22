@@ -117,46 +117,68 @@ const ProductCategoriesPage = ({ data }) => {
   };
   
   // Calculate growth metrics for selected category
-  const getCategoryGrowth = () => {
-    const monthlyData = getMonthlyData();
+// Calculate growth metrics for selected category
+// Calculate growth metrics for selected category
+const getCategoryGrowth = () => {
+  const monthlyData = getMonthlyData();
+  
+  console.log("Growth calculation started with monthly data:", monthlyData);
+  
+  if (monthlyData.length < 2) {
+    console.log("Insufficient data points for growth calculation (need at least 2)");
+    return { growth: 0, trend: 'flat' };
+  }
+  
+  let growth, firstValue, lastValue;
+  
+  // If we have at least 6 data points, compare the average of first 3 and last 3 months
+  if (monthlyData.length >= 6) {
+    const firstThreeAvg = monthlyData.slice(0, 3).reduce((sum, row) => 
+      sum + (row.count || row.order_count || 0), 0) / 3;
     
-    if (monthlyData.length < 2) return { growth: 0, trend: 'flat' };
+    const lastThreeAvg = monthlyData.slice(-3).reduce((sum, row) => 
+      sum + (row.count || row.order_count || 0), 0) / 3;
     
-    // If we have at least 6 data points, compare the average of first 3 and last 3 months
-    if (monthlyData.length >= 6) {
-      const firstThreeAvg = monthlyData.slice(0, 3).reduce((sum, row) => 
-        sum + (row.count || row.order_count || 0), 0) / 3;
-      
-      const lastThreeAvg = monthlyData.slice(-3).reduce((sum, row) => 
-        sum + (row.count || row.order_count || 0), 0) / 3;
-      
-      // Cap growth at reasonable bounds (-99% to +1000%)
-      const growth = firstThreeAvg > 0 ? 
-        Math.max(Math.min(((lastThreeAvg - firstThreeAvg) / firstThreeAvg) * 100, 1000), -99) : 0;
-      
-      return {
-        growth: growth.toFixed(2),
-        trend: growth > 5 ? 'up' : growth < -5 ? 'down' : 'flat',
-        firstMonth: firstThreeAvg,
-        lastMonth: lastThreeAvg
-      };
-    }
+    console.log("Using 3-month average method:");
+    console.log("- First three months avg:", firstThreeAvg);
+    console.log("- Last three months avg:", lastThreeAvg);
     
+    // Cap growth at reasonable bounds (-99% to +1000%)
+    growth = firstThreeAvg > 0 ? 
+      Math.max(Math.min(((lastThreeAvg - firstThreeAvg) / firstThreeAvg) * 100, 1000), -99) : 0;
+    
+    firstValue = firstThreeAvg;
+    lastValue = lastThreeAvg;
+  } else {
     // For fewer data points, use the original calculation but with capping
     const firstMonth = monthlyData[0].count || monthlyData[0].order_count || 0;
     const lastMonth = monthlyData[monthlyData.length - 1].count || monthlyData[monthlyData.length - 1].order_count || 0;
     
+    console.log("Using first-to-last month method:");
+    console.log("- First month count:", firstMonth);
+    console.log("- Last month count:", lastMonth);
+    
     // Cap growth at reasonable bounds (-99% to +1000%)
-    const growth = firstMonth > 0 ? 
+    growth = firstMonth > 0 ? 
       Math.max(Math.min(((lastMonth - firstMonth) / firstMonth) * 100, 1000), -99) : 0;
     
-    return {
-      growth: growth.toFixed(2),
-      trend: growth > 5 ? 'up' : growth < -5 ? 'down' : 'flat',
-      firstMonth,
-      lastMonth
-    };
+    firstValue = firstMonth;
+    lastValue = lastMonth;
+  }
+  
+  console.log("Raw growth rate calculation:", growth);
+  
+  const result = {
+    growth: growth.toFixed(2),
+    trend: growth > 5 ? 'up' : growth < -5 ? 'down' : 'flat',
+    firstMonth: firstValue,
+    lastMonth: lastValue
   };
+  
+  console.log("Final growth calculation result:", result);
+  
+  return result;
+};
   
   if (!data) {
     return <Typography>No category data available</Typography>;
@@ -204,90 +226,103 @@ const ProductCategoriesPage = ({ data }) => {
               Category Demand Distribution
             </Typography>
             
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie
-                  activeIndex={activeIndex}
-                  activeShape={renderActiveShape}
-                  data={categoryData}
-                  cx="50%"
-                  cy="50%"
-                  innerRadius={60}
-                  outerRadius={80}
-                  fill="#8884d8"
-                  dataKey="value"
-                  onMouseEnter={onPieEnter}
-                >
-                  {categoryData.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                  ))}
-                </Pie>
-              </PieChart>
-            </ResponsiveContainer>
+            <Box sx={{ flexGrow: 1 }}>
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie
+                    activeIndex={activeIndex}
+                    activeShape={renderActiveShape}
+                    data={categoryData}
+                    cx="50%"
+                    cy="50%"
+                    innerRadius={60}
+                    outerRadius={80}
+                    fill="#8884d8"
+                    dataKey="value"
+                    onMouseEnter={onPieEnter}
+                  >
+                    {categoryData.map((entry, index) => (
+                      <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                    ))}
+                  </Pie>
+                </PieChart>
+              </ResponsiveContainer>
+            </Box>
           </Paper>
         </Grid>
         
-        {/* Category Metrics */}
+        {/* Category Metrics - Fixed the scrolling issue */}
         <Grid item xs={12} md={6} lg={4}>
-          <Paper elevation={2} sx={{ p: 2, display: 'flex', flexDirection: 'column', height: 400 }}>
+          <Paper elevation={2} sx={{ p: 2, height: 400 }}>
             <Typography component="h2" variant="h6" color="primary" gutterBottom>
               {selectedCategory} Metrics
             </Typography>
             
-            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, p: 2, flexGrow: 1 }}>
-              <Card variant="outlined">
-                <CardContent>
-                  <Typography variant="body2" color="text.secondary">
-                    Total Demand
-                  </Typography>
-                  <Typography variant="h5">
-                    {new Intl.NumberFormat().format(
-                      monthlyData.reduce((sum, row) => sum + (row.count || row.order_count || 0), 0)
-                    )}
-                  </Typography>
-                </CardContent>
-              </Card>
-              
-              <Card variant="outlined">
-                <CardContent>
-                  <Typography variant="body2" color="text.secondary">
-                    Average Monthly Demand
-                  </Typography>
-                  <Typography variant="h5">
-                    {monthlyData.length > 0 ? 
-                      new Intl.NumberFormat().format(
-                        Math.round(monthlyData.reduce((sum, row) => sum + (row.count || row.order_count || 0), 0) / monthlyData.length)
-                      ) : '0'}
-                  </Typography>
-                </CardContent>
-              </Card>
-              
-              <Card variant="outlined">
-                <CardContent>
-                  <Typography variant="body2" color="text.secondary">
-                    Growth Rate
-                  </Typography>
-                  <Typography variant="h5" color={
-                    growthMetrics.trend === 'up' ? 'success.main' : 
-                    growthMetrics.trend === 'down' ? 'error.main' : 
-                    'text.primary'
-                  }>
-                    {growthMetrics.growth}%
-                    {growthMetrics.trend === 'up' ? ' ↑' : growthMetrics.trend === 'down' ? ' ↓' : ''}
-                  </Typography>
-                </CardContent>
-              </Card>
-              
-              <Card variant="outlined">
-                <CardContent>
-                  <Typography variant="body2" color="text.secondary">
-                    Data Points
-                  </Typography>
-                  <Typography variant="h5">
-                    {monthlyData.length}
-                  </Typography>
-                </CardContent>
-              </Card>
+            {/* Added overflow auto to ensure all cards are viewable */}
+            <Box sx={{ height: "calc(100% - 40px)", overflowY: "auto", pr: 1 }}>
+              <Grid container spacing={2}>
+                <Grid item xs={12}>
+                  <Card variant="outlined">
+                    <CardContent>
+                      <Typography variant="body2" color="text.secondary">
+                        Total Demand
+                      </Typography>
+                      <Typography variant="h5">
+                        {new Intl.NumberFormat().format(
+                          monthlyData.reduce((sum, row) => sum + (row.count || row.order_count || 0), 0)
+                        )}
+                      </Typography>
+                    </CardContent>
+                  </Card>
+                </Grid>
+                
+                <Grid item xs={12}>
+                  <Card variant="outlined">
+                    <CardContent>
+                      <Typography variant="body2" color="text.secondary">
+                        Average Monthly Demand
+                      </Typography>
+                      <Typography variant="h5">
+                        {monthlyData.length > 0 ? 
+                          new Intl.NumberFormat().format(
+                            Math.round(monthlyData.reduce((sum, row) => sum + (row.count || row.order_count || 0), 0) / monthlyData.length)
+                          ) : '0'}
+                      </Typography>
+                    </CardContent>
+                  </Card>
+                </Grid>
+                
+                <Grid item xs={12}>
+                  <Card variant="outlined">
+                    <CardContent>
+                      <Typography variant="body2" color="text.secondary">
+                        Growth Rate
+                      </Typography>
+                      <Typography variant="h5" color={
+                        growthMetrics.trend === 'up' ? 'success.main' : 
+                        growthMetrics.trend === 'down' ? 'error.main' : 
+                        'text.primary'
+                      }>
+                        {growthMetrics.growth}%
+                        {growthMetrics.trend === 'up' ? ' ↑' : growthMetrics.trend === 'down' ? ' ↓' : ''}
+                      </Typography>
+                    </CardContent>
+                  </Card>
+                </Grid>
+                
+                <Grid item xs={12}>
+                  <Card variant="outlined">
+                    <CardContent>
+                      <Typography variant="body2" color="text.secondary">
+                        Data Points
+                      </Typography>
+                      <Typography variant="h5">
+                        {monthlyData.length}
+                      </Typography>
+                    </CardContent>
+                  </Card>
+                </Grid>
+              </Grid>
             </Box>
           </Paper>
         </Grid>
@@ -296,34 +331,36 @@ const ProductCategoriesPage = ({ data }) => {
         <Grid item xs={12} md={6} lg={4}>
           <Paper elevation={2} sx={{ p: 2, display: 'flex', flexDirection: 'column', height: 400 }}>
             <Typography component="h2" variant="h6" color="primary" gutterBottom>
-              {selectedCategory} Monthly Trend
+            {selectedCategory} Historical Monthly Trend
             </Typography>
             
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart
-                data={monthlyData}
-                margin={{ top: 20, right: 30, left: 20, bottom: 60 }}
-              >
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis 
-                  dataKey="month" 
-                  angle={-45} 
-                  textAnchor="end"
-                  height={70}
-                />
-                <YAxis />
-                <Tooltip
-                  formatter={(value) => new Intl.NumberFormat().format(value)}
-                  labelFormatter={(label) => `Month: ${label}`}
-                />
-                <Legend />
-                <Bar 
-                  dataKey="count" 
-                  name="Orders" 
-                  fill="#8884d8"
-                />
-              </BarChart>
-            </ResponsiveContainer>
+            <Box sx={{ flexGrow: 1 }}>
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart
+                  data={monthlyData}
+                  margin={{ top: 20, right: 30, left: 20, bottom: 60 }}
+                >
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis 
+                    dataKey="month" 
+                    angle={-45} 
+                    textAnchor="end"
+                    height={70}
+                  />
+                  <YAxis />
+                  <Tooltip
+                    formatter={(value) => new Intl.NumberFormat().format(value)}
+                    labelFormatter={(label) => `Month: ${label}`}
+                  />
+                  <Legend />
+                  <Bar 
+                    dataKey="count" 
+                    name="Orders" 
+                    fill="#8884d8"
+                  />
+                </BarChart>
+              </ResponsiveContainer>
+            </Box>
           </Paper>
         </Grid>
         

@@ -601,7 +601,7 @@ const DemandForecastPage = ({ data }) => {
         <Grid item xs={12} lg={8}>
           <Paper elevation={2} sx={{ p: 2, display: 'flex', flexDirection: 'column', height: 500 }}>
             <Typography component="h2" variant="h6" color="primary" gutterBottom>
-              Demand Forecast for {selectedCategory}
+            Future Demand Forecast for {selectedCategory} (2025+)
             </Typography>
             {forecastNote && (
               <Typography variant="caption" color="text.secondary" sx={{ mb: 2 }}>
