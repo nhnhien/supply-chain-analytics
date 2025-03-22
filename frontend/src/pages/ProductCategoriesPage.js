@@ -24,8 +24,10 @@ const ProductCategoriesPage = ({ data }) => {
   
   useEffect(() => {
     if (data && data.topCategories && data.topCategories.length > 0) {
-      // Set the initial category selection
-      setSelectedCategory(data.topCategories[0]);
+      // Set the initial category selection if not already set
+      if (!selectedCategory) {
+        setSelectedCategory(data.topCategories[0]);
+      }
       
       // Calculate total demand by category for pie chart
       const categoryDemand = data.topCategories.map(category => {
@@ -40,7 +42,7 @@ const ProductCategoriesPage = ({ data }) => {
       
       setCategoryData(categoryDemand);
     }
-  }, [data]);
+  }, [data, selectedCategory]);
   
   // Handle category change
   const handleCategoryChange = (event) => {
@@ -120,10 +122,33 @@ const ProductCategoriesPage = ({ data }) => {
     
     if (monthlyData.length < 2) return { growth: 0, trend: 'flat' };
     
+    // If we have at least 6 data points, compare the average of first 3 and last 3 months
+    if (monthlyData.length >= 6) {
+      const firstThreeAvg = monthlyData.slice(0, 3).reduce((sum, row) => 
+        sum + (row.count || row.order_count || 0), 0) / 3;
+      
+      const lastThreeAvg = monthlyData.slice(-3).reduce((sum, row) => 
+        sum + (row.count || row.order_count || 0), 0) / 3;
+      
+      // Cap growth at reasonable bounds (-99% to +1000%)
+      const growth = firstThreeAvg > 0 ? 
+        Math.max(Math.min(((lastThreeAvg - firstThreeAvg) / firstThreeAvg) * 100, 1000), -99) : 0;
+      
+      return {
+        growth: growth.toFixed(2),
+        trend: growth > 5 ? 'up' : growth < -5 ? 'down' : 'flat',
+        firstMonth: firstThreeAvg,
+        lastMonth: lastThreeAvg
+      };
+    }
+    
+    // For fewer data points, use the original calculation but with capping
     const firstMonth = monthlyData[0].count || monthlyData[0].order_count || 0;
     const lastMonth = monthlyData[monthlyData.length - 1].count || monthlyData[monthlyData.length - 1].order_count || 0;
     
-    const growth = firstMonth > 0 ? ((lastMonth - firstMonth) / firstMonth) * 100 : 0;
+    // Cap growth at reasonable bounds (-99% to +1000%)
+    const growth = firstMonth > 0 ? 
+      Math.max(Math.min(((lastMonth - firstMonth) / firstMonth) * 100, 1000), -99) : 0;
     
     return {
       growth: growth.toFixed(2),
