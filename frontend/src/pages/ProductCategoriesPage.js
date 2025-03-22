@@ -117,8 +117,6 @@ const ProductCategoriesPage = ({ data }) => {
   };
   
   // Calculate growth metrics for selected category
-// Calculate growth metrics for selected category
-// Calculate growth metrics for selected category
 const getCategoryGrowth = () => {
   const monthlyData = getMonthlyData();
   

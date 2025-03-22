@@ -113,6 +113,27 @@ const SellerPerformancePage = ({ data }) => {
     scatterData: []
   });
   
+  // Define consistent cluster names
+  const clusterNames = {
+    0: 'High Performers',
+    1: 'Medium Performers', 
+    2: 'Low Performers'
+  };
+  
+  // For singular form used in table display
+  const clusterSingularNames = {
+    0: 'High Performer',
+    1: 'Medium Performer',
+    2: 'Low Performer'
+  };
+  
+  // Colors for visualization
+  const clusterColors = {
+    0: '#00C49F', // High performers - green
+    1: '#FFBB28', // Medium performers - amber
+    2: '#FF8042'  // Low performers - orange/red
+  };
+  
   // Process and transform data when it changes
   useEffect(() => {
     if (data && data.clusters) {
@@ -120,9 +141,22 @@ const SellerPerformancePage = ({ data }) => {
       
       // Apply data cleansing and transformation pipeline
       const processData = () => {
-        // Step 1: Clean the data - handle missing values
+        // Step 1: Clean the data - handle missing values and ensure types
         const cleanedData = rawData.map(seller => {
           if (!seller) return null;
+          
+          // Ensure prediction is properly parsed as a number
+          let prediction = null;
+          try {
+            prediction = typeof seller.prediction === 'string' 
+              ? parseInt(seller.prediction, 10) 
+              : seller.prediction;
+            
+            // Validate prediction is in valid range
+            prediction = [0, 1, 2].includes(prediction) ? prediction : 1; // Default to Medium (1)
+          } catch (e) {
+            prediction = 1; // Default to Medium (1) on error
+          }
           
           return {
             ...seller,
@@ -133,8 +167,7 @@ const SellerPerformancePage = ({ data }) => {
             avg_delivery_days: parseFloat(seller.avg_delivery_days) || 0,
             order_count: parseFloat(seller.order_count) || 0,
             on_time_delivery_rate: parseFloat(seller.on_time_delivery_rate) || 0,
-            // Default prediction to 1 (average) if invalid
-            prediction: [0, 1, 2].includes(seller.prediction) ? seller.prediction : 1
+            prediction: prediction
           };
         }).filter(seller => seller !== null);
         
@@ -150,16 +183,24 @@ const SellerPerformancePage = ({ data }) => {
         
         // Step 4: Calculate cluster metrics
         const clusters = [0, 1, 2];
-        const clusterNames = {
-          0: 'High Performers',
-          1: 'Average Performers',
-          2: 'Low Performers'
-        };
         
         const clusterMetrics = clusters.map(cluster => {
           const clusteredSellers = winsorizedData.filter(seller => seller.prediction === cluster);
           
-          if (clusteredSellers.length === 0) return null;
+          if (clusteredSellers.length === 0) {
+            console.log(`No sellers found for cluster ${cluster}`);
+            // Return dummy data for empty clusters to maintain UI consistency
+            return {
+              cluster,
+              clusterName: clusterNames[cluster],
+              count: 0,
+              avgProcessingTime: 0,
+              avgDeliveryDays: 0,
+              avgOrderCount: 0,
+              totalSales: 0,
+              avgOnTimeRate: 0
+            };
+          }
           
           const avgProcessingTime = clusteredSellers.reduce((sum, seller) => 
             sum + seller.avg_processing_time, 0) / clusteredSellers.length;
@@ -186,15 +227,62 @@ const SellerPerformancePage = ({ data }) => {
             totalSales,
             avgOnTimeRate
           };
-        }).filter(metric => metric !== null);
+        });
+        
+        // Make sure we have all three clusters represented
+        const ensureAllClusters = () => {
+          const result = [];
+          
+          // Create a map of existing clusters
+          const clusterMap = {};
+          clusterMetrics.forEach(metric => {
+            clusterMap[metric.cluster] = metric;
+          });
+          
+          // Ensure all three clusters exist
+          for (let i = 0; i < 3; i++) {
+            if (clusterMap[i]) {
+              result.push(clusterMap[i]);
+            } else {
+              // Add a placeholder for missing clusters
+              result.push({
+                cluster: i,
+                clusterName: clusterNames[i],
+                count: 0,
+                avgProcessingTime: 0,
+                avgDeliveryDays: 0,
+                avgOrderCount: 0,
+                totalSales: 0,
+                avgOnTimeRate: 0
+              });
+            }
+          }
+          
+          return result.sort((a, b) => a.cluster - b.cluster);
+        };
+
+        // Replace the clusterMetrics with the complete set
+        const completeClusterMetrics = ensureAllClusters();
+        
+        // Filter out empty clusters and sort by cluster number for consistent order
+        const validClusterMetrics = completeClusterMetrics
+          .filter(metric => metric.count > 0)
+          .sort((a, b) => a.cluster - b.cluster);
+        
+        // Log for debugging
+        console.log("Cluster metrics:", validClusterMetrics);
         
         // Step 5: Calculate cluster distribution
         const totalSellers = winsorizedData.length;
-        const clusterDistribution = clusterMetrics.map(metric => ({
+        const clusterDistribution = validClusterMetrics.map(metric => ({
           name: metric.clusterName,
           value: metric.count,
-          percentage: totalSellers > 0 ? (metric.count / totalSellers) * 100 : 0
+          percentage: totalSellers > 0 ? (metric.count / totalSellers) * 100 : 0,
+          cluster: metric.cluster // Keep track of the original cluster number
         }));
+        
+        // Log for debugging
+        console.log("Cluster distribution:", clusterDistribution);
         
         // Step 6: Prepare scatter plot data
         const scatterData = clusters
@@ -219,19 +307,44 @@ const SellerPerformancePage = ({ data }) => {
               }))
           }));
         
+        // Debug logging
+        console.log("Final cluster metrics:", completeClusterMetrics);
+        console.log("Final cluster metrics by name:", completeClusterMetrics.map(m => m.clusterName));
+        console.log("Performance metrics data for chart:", [
+          {
+            clusterName: "High Performers",
+            avgProcessingTime: completeClusterMetrics.find(m => m.cluster === 0)?.avgProcessingTime || 0,
+            avgOrderCount: completeClusterMetrics.find(m => m.cluster === 0)?.avgOrderCount || 0
+          },
+          {
+            clusterName: "Medium Performers",
+            avgProcessingTime: completeClusterMetrics.find(m => m.cluster === 1)?.avgProcessingTime || 0,
+            avgOrderCount: completeClusterMetrics.find(m => m.cluster === 1)?.avgOrderCount || 0
+          },
+          {
+            clusterName: "Low Performers",
+            avgProcessingTime: completeClusterMetrics.find(m => m.cluster === 2)?.avgProcessingTime || 0,
+            avgOrderCount: completeClusterMetrics.find(m => m.cluster === 2)?.avgOrderCount || 0
+          }
+        ]);
+          
         return {
           winsorized: winsorizedData,
           normalized: normalizedData,
-          clusterMetrics,
+          clusterMetrics: completeClusterMetrics,
           clusterDistribution,
           scatterData
         };
       };
       
       // Execute data processing and update state
-      const processedResults = processData();
-      setSellerData(processedResults.winsorized);
-      setProcessedData(processedResults);
+      try {
+        const processedResults = processData();
+        setSellerData(processedResults.winsorized);
+        setProcessedData(processedResults);
+      } catch (error) {
+        console.error("Error processing seller data:", error);
+      }
     }
   }, [data]);
   
@@ -276,14 +389,6 @@ const SellerPerformancePage = ({ data }) => {
     page * rowsPerPage + rowsPerPage
   );
   
-  // Colors for visualization
-  const COLORS = ['#00C49F', '#FFBB28', '#FF8042'];
-  const clusterColors = {
-    0: '#00C49F', // High performers
-    1: '#FFBB28', // Average performers
-    2: '#FF8042'  // Low performers
-  };
-  
   // Map performance rating from 1-5 stars based on cluster and relative performance
   const getPerformanceRating = (seller) => {
     if (!seller) return 0;
@@ -299,6 +404,7 @@ const SellerPerformancePage = ({ data }) => {
     const clusterAvgTime = clusterMetric.avgProcessingTime;
     const sellerTime = seller.avg_processing_time || 0;
     
+    // For processing time, lower is better, so we give better rating if below average
     const timeAdjustment = clusterAvgTime > 0 
       ? Math.round((clusterAvgTime - sellerTime) / clusterAvgTime * 0.5) // +/- 0.5 star based on processing time
       : 0;
@@ -306,6 +412,7 @@ const SellerPerformancePage = ({ data }) => {
     const clusterAvgOnTime = clusterMetric.avgOnTimeRate;
     const sellerOnTime = seller.on_time_delivery_rate || 0;
     
+    // For on-time delivery, higher is better
     const onTimeAdjustment = clusterAvgOnTime > 0 
       ? Math.round((sellerOnTime - clusterAvgOnTime) / clusterAvgOnTime * 0.5) // +/- 0.5 star based on on-time rate
       : 0;
@@ -379,7 +486,11 @@ const SellerPerformancePage = ({ data }) => {
               <ResponsiveContainer width="100%" height={250}>
                 <PieChart>
                   <Pie
-                    data={processedData.clusterDistribution}
+                    data={[
+                      { name: "High Performers", value: processedData.clusterMetrics.find(m => m.cluster === 0)?.count || 0, cluster: 0 },
+                      { name: "Medium Performers", value: processedData.clusterMetrics.find(m => m.cluster === 1)?.count || 0, cluster: 1 },
+                      { name: "Low Performers", value: processedData.clusterMetrics.find(m => m.cluster === 2)?.count || 0, cluster: 2 }
+                    ].filter(item => item.value > 0)}
                     cx="50%"
                     cy="50%"
                     innerRadius={60}
@@ -387,13 +498,21 @@ const SellerPerformancePage = ({ data }) => {
                     fill="#8884d8"
                     paddingAngle={5}
                     dataKey="value"
-                    label={({ name, percentage }) => `${name} (${percentage.toFixed(1)}%)`}
                   >
-                    {processedData.clusterDistribution.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                    {[0, 1, 2].map((cluster) => (
+                      <Cell 
+                        key={`cell-${cluster}`}
+                        fill={clusterColors[cluster]} 
+                      />
                     ))}
                   </Pie>
-                  <RechartsTooltip formatter={(value) => `${value} sellers`} />
+                  <Legend />
+                  <RechartsTooltip 
+                    formatter={(value, name) => [
+                      `${value} sellers (${(value / sellerData.length * 100).toFixed(1)}%)`, 
+                      name
+                    ]}
+                  />
                 </PieChart>
               </ResponsiveContainer>
             </Box>
@@ -410,7 +529,23 @@ const SellerPerformancePage = ({ data }) => {
             <Box sx={{ flexGrow: 1 }}>
               <ResponsiveContainer width="100%" height={250}>
                 <BarChart
-                  data={processedData.clusterMetrics}
+                  data={[
+                    {
+                      clusterName: "High Performers",
+                      avgProcessingTime: processedData.clusterMetrics.find(m => m.cluster === 0)?.avgProcessingTime || 0,
+                      avgOrderCount: processedData.clusterMetrics.find(m => m.cluster === 0)?.avgOrderCount || 0
+                    },
+                    {
+                      clusterName: "Medium Performers",
+                      avgProcessingTime: processedData.clusterMetrics.find(m => m.cluster === 1)?.avgProcessingTime || 0,
+                      avgOrderCount: processedData.clusterMetrics.find(m => m.cluster === 1)?.avgOrderCount || 0
+                    },
+                    {
+                      clusterName: "Low Performers",
+                      avgProcessingTime: processedData.clusterMetrics.find(m => m.cluster === 2)?.avgProcessingTime || 0,
+                      avgOrderCount: processedData.clusterMetrics.find(m => m.cluster === 2)?.avgOrderCount || 0
+                    }
+                  ]}
                   margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
                 >
                   <CartesianGrid strokeDasharray="3 3" />
@@ -506,7 +641,7 @@ const SellerPerformancePage = ({ data }) => {
                   >
                     <MenuItem value="all">All Clusters</MenuItem>
                     <MenuItem value="0">High Performers</MenuItem>
-                    <MenuItem value="1">Average Performers</MenuItem>
+                    <MenuItem value="1">Medium Performers</MenuItem>
                     <MenuItem value="2">Low Performers</MenuItem>
                   </Select>
                 </FormControl>
@@ -535,11 +670,6 @@ const SellerPerformancePage = ({ data }) => {
                 <TableBody>
                   {visibleRows.map((seller) => {
                     const rating = getPerformanceRating(seller);
-                    const clusterName = seller.prediction === 0 
-                      ? 'High Performer' 
-                      : seller.prediction === 1 
-                      ? 'Average Performer' 
-                      : 'Low Performer';
                       
                     return (
                       <TableRow
@@ -568,7 +698,7 @@ const SellerPerformancePage = ({ data }) => {
                         </TableCell>
                         <TableCell>
                           <Chip
-                            label={clusterName}
+                            label={clusterSingularNames[seller.prediction]}
                             size="small"
                             sx={{ bgcolor: clusterColors[seller.prediction], color: 'white' }}
                           />
@@ -613,7 +743,7 @@ const SellerPerformancePage = ({ data }) => {
         
         {/* Performance Insights */}
         <Grid item xs={12}>
-          <Paper elevation={2} sx={{ p: 2, mt: 2 }}>
+        <Paper elevation={2} sx={{ p: 2, mt: 2 }}>
             <Typography component="h2" variant="h6" color="primary" gutterBottom>
               Performance Insights
             </Typography>
@@ -633,7 +763,7 @@ const SellerPerformancePage = ({ data }) => {
                             Seller Count:
                           </Typography>
                           <Typography variant="body1">
-                            {metric.count} ({(metric.percentage || 0).toFixed(1)}%)
+                            {metric.count} ({sellerData.length > 0 ? (metric.count / sellerData.length * 100).toFixed(1) : '0'}%)
                           </Typography>
                         </Box>
                         <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
