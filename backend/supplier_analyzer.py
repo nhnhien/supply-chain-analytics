@@ -159,7 +159,7 @@ class SupplierAnalyzer:
             # Order count and sales contribute 40% 
             (self.data['log_order_count'] / self.data['log_order_count'].max()) * 15 +
             (self.data['log_total_sales'] / self.data['log_total_sales'].max()) * 25 +
-            # Processing time and delivery contribute 40%
+            # Processing time and delivery contribute 40% (inverted so lower is better)
             (1 - (self.data['avg_processing_time'] / self.data['avg_processing_time'].max())) * 20 +
             (1 - (self.data['avg_delivery_days'] / self.data['avg_delivery_days'].max())) * 20
         )
@@ -171,35 +171,62 @@ class SupplierAnalyzer:
             # If on_time_delivery not available, increase weight of processing time
             self.data['score'] += (1 - (self.data['avg_processing_time'] / self.data['avg_processing_time'].max())) * 10
             self.data['score'] += (1 - (self.data['avg_delivery_days'] / self.data['avg_delivery_days'].max())) * 10
-            
-        # Get the true performance clusters based on score, not K-means
-        # This ensures high score = high performance regardless of K-means results
-        high_threshold = self.data['score'].quantile(0.70)
-        low_threshold = self.data['score'].quantile(0.30)
+        
+        # Instead of using quantiles, ensure exactly even distribution
+        # by sorting sellers by score and splitting into three equal groups
+        sorted_indices = self.data['score'].argsort().values
+        total_count = len(sorted_indices)
+        third = total_count // 3
+        
+        # Reset all performance labels first
         self.data['performance'] = 'Medium'
-        self.data.loc[self.data['score'] >= high_threshold, 'performance'] = 'High'
-        self.data.loc[self.data['score'] <= low_threshold, 'performance'] = 'Low'
+        self.data['prediction'] = 1
         
-        # Map performance labels to standard prediction values (0=High, 1=Medium, 2=Low)
-        performance_mapping = {'High': 0, 'Medium': 1, 'Low': 2}
-        self.data['prediction'] = self.data['performance'].map(performance_mapping)
+        # FIX: Correct the assignment order so high scores get "High" performance
+        # Assign low performers (bottom third - lowest scores)
+        low_indices = sorted_indices[:third]
+        self.data.loc[self.data.index[low_indices], 'performance'] = 'Low'
+        self.data.loc[self.data.index[low_indices], 'prediction'] = 2
         
-        # For consistent cluster interpretation, use the derived "prediction" values
-        self.performance_labels = {}
-        for pred in sorted(self.data['prediction'].unique()):
-            cluster_df = self.data[self.data['prediction'] == pred]
-            most_common = cluster_df['performance'].mode()[0]
-            self.performance_labels[pred] = most_common
+        # Assign medium performers (middle third)
+        medium_indices = sorted_indices[third:2*third]
+        self.data.loc[self.data.index[medium_indices], 'performance'] = 'Medium'
+        self.data.loc[self.data.index[medium_indices], 'prediction'] = 1
         
+        # Assign high performers (top third - highest scores)
+        high_indices = sorted_indices[2*third:]
+        self.data.loc[self.data.index[high_indices], 'performance'] = 'High'
+        self.data.loc[self.data.index[high_indices], 'prediction'] = 0
+        
+        # For consistent cluster interpretation
+        self.performance_labels = {0: 'High', 1: 'Medium', 2: 'Low'}
+        
+        # Count each performance category
+        high_count = sum(self.data['prediction'] == 0)
+        medium_count = sum(self.data['prediction'] == 1)
+        low_count = sum(self.data['prediction'] == 2)
+        total_count = len(self.data)
+        
+        # Create interpretation DataFrame with exact counts
         interpretation = pd.DataFrame({
-            'cluster': list(self.performance_labels.keys()),
-            'performance': [self.performance_labels[k] for k in self.performance_labels.keys()],
-            'count': [sum(self.data['prediction'] == k) for k in self.performance_labels.keys()],
-            'percentage': [sum(self.data['prediction'] == k) / len(self.data) * 100 for k in self.performance_labels.keys()],
-            'avg_sales': [self.data[self.data['prediction'] == k]['total_sales'].mean() for k in self.performance_labels.keys()],
-            'avg_processing_time': [self.data[self.data['prediction'] == k]['avg_processing_time'].mean() for k in self.performance_labels.keys()],
-            'avg_order_count': [self.data[self.data['prediction'] == k]['order_count'].mean() for k in self.performance_labels.keys()]
+            'cluster': [0, 1, 2],
+            'performance': ['High', 'Medium', 'Low'],
+            'count': [high_count, medium_count, low_count],
+            'percentage': [high_count / total_count * 100, medium_count / total_count * 100, low_count / total_count * 100],
         })
+        
+        # Calculate metrics for each cluster
+        for i, row in interpretation.iterrows():
+            cluster = row['cluster']
+            cluster_data = self.data[self.data['prediction'] == cluster]
+            
+            # Calculate average metrics
+            interpretation.loc[i, 'avg_sales'] = cluster_data['total_sales'].mean()
+            interpretation.loc[i, 'avg_processing_time'] = cluster_data['avg_processing_time'].mean()
+            interpretation.loc[i, 'avg_delivery_days'] = cluster_data['avg_delivery_days'].mean()
+            interpretation.loc[i, 'avg_order_count'] = cluster_data['order_count'].mean()
+            if 'on_time_delivery_rate' in cluster_data.columns:
+                interpretation.loc[i, 'avg_on_time_rate'] = cluster_data['on_time_delivery_rate'].mean()
         
         # Sort interpretation by standard performance order: High, Medium, Low
         interpretation['performance_order'] = interpretation['performance'].map(
@@ -214,10 +241,13 @@ class SupplierAnalyzer:
             print(f"  Average Sales: ${row['avg_sales']:.2f}")
             print(f"  Average Processing Time: {row['avg_processing_time']:.2f} days")
             print(f"  Average Order Count: {row['avg_order_count']:.2f}")
+            if 'avg_on_time_rate' in interpretation.columns:
+                print(f"  Average On-Time Rate: {row['avg_on_time_rate']:.1f}%")
+            if 'avg_delivery_days' in interpretation.columns:
+                print(f"  Average Delivery Days: {row['avg_delivery_days']:.1f} days")
             print()
         
         return self.data, interpretation
-    
     def visualize_clusters(self, output_file="supplier_clusters.png"):
         """
         Create visualizations of supplier clusters.
@@ -556,12 +586,13 @@ class SupplierAnalyzer:
         plt.figure(figsize=(10, 10))
         colors = {'High': '#1f77b4', 'Medium': '#ff7f0e', 'Low': '#d62728'}
         plot_colors = [colors[p] for p in performance_counts['Performance']]
+
         plt.pie(
             performance_counts['Count'],
             labels=[f"{p} ({c} suppliers, {pct}%)" for p, c, pct in 
-                  zip(performance_counts['Performance'], 
-                     performance_counts['Count'], 
-                     performance_counts['Percentage'])],
+                    zip(performance_counts['Performance'], 
+                        performance_counts['Count'], 
+                        performance_counts['Percentage'])],
             colors=plot_colors,
             autopct='',
             startangle=90,
@@ -592,7 +623,8 @@ class SupplierAnalyzer:
         plt.tight_layout()
         plt.savefig(output_file.replace('.png', '_bar.png'), dpi=300)
         plt.close()
-        
+                
+            
     def analyze_supplier_trends(self, output_file="supplier_trends.png"):
         """
         Create visualization of key supplier metrics by performance tier.
@@ -630,7 +662,7 @@ class SupplierAnalyzer:
         plt.subplots_adjust(top=0.92)
         plt.savefig(output_file, dpi=300)
         plt.close()
-        
+                
     def run_analysis(self, output_dir="./output"):
         """
         Run complete supplier analysis and generate reports and visualizations.
@@ -674,9 +706,8 @@ class SupplierAnalyzer:
             'interpretation': interpretation,
             'performance_report': performance_report,
             'recommendations': recommendations
-        }
-
-# If run as a script
+        }                
+        # If run as a script
 if __name__ == "__main__":
     analyzer = SupplierAnalyzer("seller_clusters.csv")
     results = analyzer.run_analysis("./output")

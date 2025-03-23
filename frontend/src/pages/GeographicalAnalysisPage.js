@@ -2,26 +2,61 @@ import React, { useState } from 'react';
 import { 
   Grid, Paper, Typography, Box, Card, CardContent, 
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
-  Chip, TablePagination
+  Chip, TablePagination, useTheme, Divider, Alert, AlertTitle,
+  Tooltip, IconButton
 } from '@mui/material';
 import { 
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, 
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, 
   Legend, ResponsiveContainer, Cell, PieChart, Pie
 } from 'recharts';
+import {
+  Public as PublicIcon,
+  Map as MapIcon,
+  TrendingUp as TrendingUpIcon,
+  LocalShipping as ShippingIcon,
+  AttachMoney as MoneyIcon,
+  PieChart as PieChartIcon,
+  TableChart as TableChartIcon,
+  Insights as InsightsIcon,
+  Info as InfoIcon
+} from '@mui/icons-material';
 
 const GeographicalAnalysisPage = ({ data }) => {
+  const theme = useTheme();
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(10);
   
   if (!data || !data.stateMetrics || data.stateMetrics.length === 0) {
     return (
-      <Box>
-        <Typography variant="h4" gutterBottom>
+      <Box sx={{ p: 3 }}>
+        <Typography variant="h4" gutterBottom sx={{ 
+          fontWeight: 'bold',
+          color: theme.palette.primary.main,
+          borderBottom: `2px solid ${theme.palette.divider}`,
+          pb: 1,
+          display: 'flex',
+          alignItems: 'center'
+        }}>
+          <PublicIcon sx={{ mr: 1 }} />
           Geographical Analysis
         </Typography>
-        <Typography>
-          No geographical data available. Run the supply chain analysis first.
-        </Typography>
+        
+        <Alert 
+          severity="info" 
+          variant="filled"
+          sx={{ 
+            mt: 4,
+            boxShadow: theme.shadows[3],
+            '& .MuiAlert-icon': {
+              fontSize: '2rem'
+            }
+          }}
+        >
+          <AlertTitle sx={{ fontWeight: 'bold' }}>No Geographical Data Available</AlertTitle>
+          <Typography variant="body1">
+            Run the supply chain analysis first to generate geographical insights.
+          </Typography>
+        </Alert>
       </Box>
     );
   }
@@ -79,7 +114,14 @@ const GeographicalAnalysisPage = ({ data }) => {
   }
   
   // Colors for charts
-  const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884D8', '#AAAAAA'];
+  const COLORS = [
+    theme.palette.primary.main,
+    theme.palette.secondary.main,
+    theme.palette.success.main,
+    theme.palette.warning.main,
+    theme.palette.error.main,
+    theme.palette.grey[500]
+  ];
   
   // Compute fastest delivery region safely
   const sortedByDelivery = [...sortedStates].sort((a, b) => (a.avg_delivery_days || 0) - (b.avg_delivery_days || 0));
@@ -90,17 +132,53 @@ const GeographicalAnalysisPage = ({ data }) => {
   const highestValueRegion = sortedBySales.length > 0 ? sortedBySales[0] : null;
   
   return (
-    <Box>
-      <Typography variant="h4" gutterBottom>
+    <Box sx={{ p: { xs: 2, sm: 3 } }}>
+      <Typography variant="h4" gutterBottom sx={{ 
+        fontWeight: 'bold',
+        color: theme.palette.primary.main,
+        borderBottom: `2px solid ${theme.palette.divider}`,
+        pb: 1,
+        mb: 3,
+        display: 'flex',
+        alignItems: 'center'
+      }}>
+        <PublicIcon sx={{ mr: 1 }} />
         Geographical Analysis
       </Typography>
       
-      <Grid container spacing={3}>
+      <Grid container spacing={4}>
+        {/* Main content section heading */}
+        <Grid item xs={12}>
+          <Box sx={{ mt: 1, mb: 1 }}>
+            <Typography variant="h5" component="h2" sx={{ 
+              fontWeight: 'medium',
+              borderLeft: `4px solid ${theme.palette.primary.main}`,
+              pl: 2
+            }}>
+              Regional Performance
+            </Typography>
+          </Box>
+        </Grid>
+        
         {/* Top States Bar Chart */}
-        <Grid item xs={12} md={8}>
-          <Paper elevation={2} sx={{ p: 2, display: 'flex', flexDirection: 'column', height: 400 }}>
-            <Typography component="h2" variant="h6" color="primary" gutterBottom>
-              Top States by Order Count
+        <Grid item xs={12} lg={8}>
+          <Paper elevation={3} sx={{ 
+            p: 3, 
+            display: 'flex', 
+            flexDirection: 'column', 
+            height: 450,
+            borderRadius: 2,
+            boxShadow: '0 4px 20px rgba(0,0,0,0.1)'
+          }}>
+            <Typography component="h2" variant="h6" gutterBottom sx={{ 
+              color: theme.palette.primary.main,
+              fontWeight: 'bold',
+              display: 'flex',
+              alignItems: 'center',
+              borderBottom: `1px solid ${theme.palette.divider}`,
+              pb: 1
+            }}>
+              <MapIcon sx={{ mr: 1 }} /> Top States by Order Count
             </Typography>
             
             <ResponsiveContainer width="100%" height="100%">
@@ -109,22 +187,34 @@ const GeographicalAnalysisPage = ({ data }) => {
                 margin={{ top: 20, right: 30, left: 20, bottom: 60 }}
                 layout="vertical"
               >
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis type="number" />
+                <CartesianGrid strokeDasharray="3 3" stroke={theme.palette.divider} />
+                <XAxis 
+                  type="number" 
+                  tick={{ fill: theme.palette.text.secondary }}
+                />
                 <YAxis 
                   dataKey="customer_state" 
                   type="category" 
-                  tick={{ fontSize: 12 }}
-                  width={80}
+                  tick={{ fontSize: 12, fill: theme.palette.text.secondary }}
+                  width={100}
                 />
-                <Tooltip 
+                <RechartsTooltip 
                   formatter={(value) => new Intl.NumberFormat().format(value)}
+                  contentStyle={{
+                    backgroundColor: theme.palette.background.paper,
+                    border: `1px solid ${theme.palette.divider}`,
+                    borderRadius: '8px',
+                    boxShadow: theme.shadows[3]
+                  }}
                 />
-                <Legend />
+                <Legend 
+                  formatter={(value) => <span style={{ color: theme.palette.text.primary, fontWeight: 500 }}>{value}</span>}
+                />
                 <Bar 
                   dataKey="order_count" 
                   name="Order Count" 
                   fill="#8884d8"
+                  radius={[0, 4, 4, 0]}
                 >
                   {topStates.map((entry, index) => (
                     <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
@@ -136,10 +226,24 @@ const GeographicalAnalysisPage = ({ data }) => {
         </Grid>
         
         {/* Order Distribution Pie Chart */}
-        <Grid item xs={12} md={4}>
-          <Paper elevation={2} sx={{ p: 2, display: 'flex', flexDirection: 'column', height: 400 }}>
-            <Typography component="h2" variant="h6" color="primary" gutterBottom>
-              Order Distribution
+        <Grid item xs={12} lg={4}>
+          <Paper elevation={3} sx={{ 
+            p: 3, 
+            display: 'flex', 
+            flexDirection: 'column', 
+            height: 450,
+            borderRadius: 2,
+            boxShadow: '0 4px 20px rgba(0,0,0,0.1)'
+          }}>
+            <Typography component="h2" variant="h6" gutterBottom sx={{ 
+              color: theme.palette.primary.main,
+              fontWeight: 'bold',
+              display: 'flex',
+              alignItems: 'center',
+              borderBottom: `1px solid ${theme.palette.divider}`,
+              pb: 1
+            }}>
+              <PieChartIcon sx={{ mr: 1 }} /> Order Distribution
             </Typography>
             
             <ResponsiveContainer width="100%" height="100%">
@@ -149,40 +253,215 @@ const GeographicalAnalysisPage = ({ data }) => {
                   cx="50%"
                   cy="50%"
                   labelLine={false}
-                  outerRadius={80}
+                  outerRadius={100}
+                  innerRadius={40}
+                  paddingAngle={2}
                   fill="#8884d8"
                   dataKey="value"
+                  stroke={theme.palette.background.paper}
+                  strokeWidth={2}
                   label={({ name, percentage }) => `${name} (${percentage.toFixed(1)}%)`}
                 >
                   {pieData.map((entry, index) => (
                     <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                   ))}
                 </Pie>
-                <Tooltip 
+                <RechartsTooltip 
                   formatter={(value) => new Intl.NumberFormat().format(value)}
+                  contentStyle={{
+                    backgroundColor: theme.palette.background.paper,
+                    border: `1px solid ${theme.palette.divider}`,
+                    borderRadius: '8px',
+                    boxShadow: theme.shadows[3]
+                  }}
                 />
               </PieChart>
             </ResponsiveContainer>
           </Paper>
         </Grid>
         
+        {/* Regional Insights Section */}
+        <Grid item xs={12}>
+          <Box sx={{ mt: 2, mb: 1 }}>
+            <Typography variant="h5" component="h2" sx={{ 
+              fontWeight: 'medium',
+              borderLeft: `4px solid ${theme.palette.secondary.main}`,
+              pl: 2
+            }}>
+              Regional Insights
+            </Typography>
+          </Box>
+        </Grid>
+        
+        {/* Regional Insights Cards */}
+        <Grid item xs={12}>
+          <Grid container spacing={3}>
+            <Grid item xs={12} md={4}>
+              <Card elevation={3} sx={{ 
+                borderRadius: 2, 
+                boxShadow: '0 4px 20px rgba(0,0,0,0.1)',
+                height: '100%',
+                transition: 'transform 0.2s',
+                '&:hover': {
+                  transform: 'translateY(-4px)',
+                  boxShadow: theme.shadows[6]
+                }
+              }}>
+                <CardContent sx={{ p: 3 }}>
+                  <Typography variant="h6" gutterBottom color="primary" sx={{ 
+                    display: 'flex', 
+                    alignItems: 'center',
+                    pb: 1,
+                    borderBottom: `1px solid ${theme.palette.divider}`,
+                    fontWeight: 'bold'
+                  }}>
+                    <TrendingUpIcon sx={{ mr: 1 }} />
+                    Top Performing Region
+                  </Typography>
+                  <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', mt: 2 }}>
+                    <Typography variant="h5" sx={{ fontWeight: 'bold', mb: 1 }}>
+                      {topPerformingRegion ? topPerformingRegion.customer_state : 'N/A'}
+                    </Typography>
+                    <Chip 
+                      label={topPerformingRegion ? `${new Intl.NumberFormat().format(topPerformingRegion.order_count || 0)} orders` : 'No data available'} 
+                      color="primary"
+                      sx={{ mt: 1, fontWeight: 'medium' }}
+                    />
+                  </Box>
+                </CardContent>
+              </Card>
+            </Grid>
+            
+            <Grid item xs={12} md={4}>
+              <Card elevation={3} sx={{ 
+                borderRadius: 2, 
+                boxShadow: '0 4px 20px rgba(0,0,0,0.1)',
+                height: '100%',
+                transition: 'transform 0.2s',
+                '&:hover': {
+                  transform: 'translateY(-4px)',
+                  boxShadow: theme.shadows[6]
+                }
+              }}>
+                <CardContent sx={{ p: 3 }}>
+                  <Typography variant="h6" gutterBottom color="secondary" sx={{ 
+                    display: 'flex', 
+                    alignItems: 'center',
+                    pb: 1,
+                    borderBottom: `1px solid ${theme.palette.divider}`,
+                    fontWeight: 'bold'
+                  }}>
+                    <ShippingIcon sx={{ mr: 1 }} />
+                    Fastest Delivery Region
+                  </Typography>
+                  <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', mt: 2 }}>
+                    <Typography variant="h5" sx={{ fontWeight: 'bold', mb: 1 }}>
+                      {fastestRegion ? fastestRegion.customer_state : 'N/A'}
+                    </Typography>
+                    <Chip 
+                      label={fastestRegion ? `${(fastestRegion.avg_delivery_days || 0).toFixed(1)} days average delivery` : 'No data available'} 
+                      color="secondary"
+                      sx={{ mt: 1, fontWeight: 'medium' }}
+                    />
+                  </Box>
+                </CardContent>
+              </Card>
+            </Grid>
+            
+            <Grid item xs={12} md={4}>
+              <Card elevation={3} sx={{ 
+                borderRadius: 2, 
+                boxShadow: '0 4px 20px rgba(0,0,0,0.1)',
+                height: '100%',
+                transition: 'transform 0.2s',
+                '&:hover': {
+                  transform: 'translateY(-4px)',
+                  boxShadow: theme.shadows[6]
+                }
+              }}>
+                <CardContent sx={{ p: 3 }}>
+                  <Typography variant="h6" gutterBottom color="success.dark" sx={{ 
+                    display: 'flex', 
+                    alignItems: 'center',
+                    pb: 1,
+                    borderBottom: `1px solid ${theme.palette.divider}`,
+                    fontWeight: 'bold'
+                  }}>
+                    <MoneyIcon sx={{ mr: 1 }} />
+                    Highest Value Region
+                  </Typography>
+                  <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', mt: 2 }}>
+                    <Typography variant="h5" sx={{ fontWeight: 'bold', mb: 1 }}>
+                      {highestValueRegion ? highestValueRegion.customer_state : 'N/A'}
+                    </Typography>
+                    <Chip 
+                      label={highestValueRegion ? `$${new Intl.NumberFormat().format(highestValueRegion.total_sales || 0)} total sales` : 'No data available'} 
+                      color="success"
+                      sx={{ mt: 1, fontWeight: 'medium' }}
+                    />
+                  </Box>
+                </CardContent>
+              </Card>
+            </Grid>
+          </Grid>
+        </Grid>
+        
+        {/* State Metrics Table Section */}
+        <Grid item xs={12}>
+          <Box sx={{ mt: 4, mb: 1 }}>
+            <Typography variant="h5" component="h2" sx={{ 
+              fontWeight: 'medium',
+              borderLeft: `4px solid ${theme.palette.info.main}`,
+              pl: 2
+            }}>
+              Detailed State Metrics
+            </Typography>
+          </Box>
+        </Grid>
+        
         {/* State Metrics Table */}
         <Grid item xs={12}>
-          <Paper elevation={2} sx={{ width: '100%' }}>
+          <Paper elevation={3} sx={{ 
+            width: '100%',
+            borderRadius: 2,
+            boxShadow: '0 4px 20px rgba(0,0,0,0.1)',
+            overflow: 'hidden'
+          }}>
+            <Box sx={{ 
+              p: 2, 
+              pl: 3, 
+              display: 'flex', 
+              alignItems: 'center',
+              borderBottom: `1px solid ${theme.palette.divider}`
+            }}>
+              <Typography component="h2" variant="h6" sx={{
+                color: theme.palette.info.main,
+                fontWeight: 'bold',
+                display: 'flex',
+                alignItems: 'center'
+              }}>
+                <TableChartIcon sx={{ mr: 1 }} /> State Performance Metrics
+              </Typography>
+              <Tooltip title="This table shows detailed metrics for each state in the dataset">
+                <IconButton size="small" sx={{ ml: 1 }}>
+                  <InfoIcon fontSize="small" />
+                </IconButton>
+              </Tooltip>
+            </Box>
             <TableContainer>
               <Table>
                 <TableHead>
-                  <TableRow>
-                    <TableCell>State</TableCell>
-                    <TableCell align="right">Order Count</TableCell>
-                    <TableCell align="right">Total Sales</TableCell>
-                    <TableCell align="right">Avg. Processing Time</TableCell>
-                    <TableCell align="right">Avg. Delivery Days</TableCell>
-                    <TableCell>Top Category</TableCell>
+                  <TableRow sx={{ backgroundColor: theme.palette.action.hover }}>
+                    <TableCell sx={{ fontWeight: 'bold' }}>State</TableCell>
+                    <TableCell align="right" sx={{ fontWeight: 'bold' }}>Order Count</TableCell>
+                    <TableCell align="right" sx={{ fontWeight: 'bold' }}>Total Sales</TableCell>
+                    <TableCell align="right" sx={{ fontWeight: 'bold' }}>Avg. Processing Time</TableCell>
+                    <TableCell align="right" sx={{ fontWeight: 'bold' }}>Avg. Delivery Days</TableCell>
+                    <TableCell sx={{ fontWeight: 'bold' }}>Top Category</TableCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>
-                  {visibleRows.map((state) => {
+                  {visibleRows.map((state, index) => {
                     const topCategory = data.topCategoryByState && 
                       data.topCategoryByState.find(item => item.customer_state === state.customer_state);
                     
@@ -190,21 +469,55 @@ const GeographicalAnalysisPage = ({ data }) => {
                       <TableRow
                         key={state.customer_state}
                         hover
+                        sx={{
+                          '&:nth-of-type(even)': {
+                            backgroundColor: theme.palette.action.hover,
+                          },
+                          '&:hover': {
+                            backgroundColor: theme.palette.action.selected,
+                          },
+                        }}
                       >
-                        <TableCell component="th" scope="row">
+                        <TableCell component="th" scope="row" sx={{ fontWeight: 'medium' }}>
                           {state.customer_state}
                         </TableCell>
                         <TableCell align="right">
-                          {new Intl.NumberFormat().format(state.order_count || 0)}
+                          <Typography
+                            component="span"
+                            fontWeight="medium"
+                            color={index === 0 ? 'primary.main' : 'inherit'}
+                          >
+                            {new Intl.NumberFormat().format(state.order_count || 0)}
+                          </Typography>
                         </TableCell>
                         <TableCell align="right">
-                          ${new Intl.NumberFormat().format(state.total_sales || 0)}
+                          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end' }}>
+                            <MoneyIcon 
+                              fontSize="small" 
+                              sx={{ 
+                                mr: 0.5, 
+                                color: state === highestValueRegion ? theme.palette.success.main : 'inherit',
+                                opacity: state === highestValueRegion ? 1 : 0.5
+                              }} 
+                            />
+                            ${new Intl.NumberFormat().format(state.total_sales || 0)}
+                          </Box>
                         </TableCell>
                         <TableCell align="right">
                           {(state.avg_processing_time || 0).toFixed(1)} days
                         </TableCell>
                         <TableCell align="right">
-                          {(state.avg_delivery_days || 0).toFixed(1)} days
+                          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end' }}>
+                            <ShippingIcon 
+                              fontSize="small" 
+                              sx={{ 
+                                mr: 0.5, 
+                                color: state === fastestRegion ? theme.palette.secondary.main : 'inherit',
+                                opacity: state === fastestRegion ? 1 : 0.5
+                              }} 
+                            />
+                            {(state.avg_delivery_days || 0).toFixed(1)} days
+                          </Box>
                         </TableCell>
                         <TableCell>
                           {topCategory ? (
@@ -213,6 +526,7 @@ const GeographicalAnalysisPage = ({ data }) => {
                               size="small"
                               color="primary"
                               variant="outlined"
+                              sx={{ fontWeight: 'medium' }}
                             />
                           ) : (
                             '-'
@@ -221,6 +535,13 @@ const GeographicalAnalysisPage = ({ data }) => {
                       </TableRow>
                     );
                   })}
+                  {visibleRows.length === 0 && (
+                    <TableRow>
+                      <TableCell colSpan={6} align="center" sx={{ py: 3 }}>
+                        <Typography color="text.secondary">No state metrics available</Typography>
+                      </TableCell>
+                    </TableRow>
+                  )}
                 </TableBody>
               </Table>
             </TableContainer>
@@ -232,78 +553,13 @@ const GeographicalAnalysisPage = ({ data }) => {
               page={page}
               onPageChange={handleChangePage}
               onRowsPerPageChange={handleChangeRowsPerPage}
+              sx={{ 
+                borderTop: `1px solid ${theme.palette.divider}`,
+                '& .MuiTablePagination-toolbar': {
+                  padding: '16px'
+                }
+              }}
             />
-          </Paper>
-        </Grid>
-        
-        {/* Regional Insights */}
-        <Grid item xs={12}>
-          <Paper elevation={2} sx={{ p: 2, mt: 2 }}>
-            <Typography component="h2" variant="h6" color="primary" gutterBottom>
-              Regional Insights
-            </Typography>
-            
-            <Grid container spacing={3}>
-              <Grid item xs={12} md={4}>
-                <Card>
-                  <CardContent>
-                    <Typography variant="h6" gutterBottom>
-                      Top Performing Region
-                    </Typography>
-                    <Typography variant="body1">
-                      {topPerformingRegion ? topPerformingRegion.customer_state : 'N/A'}
-                    </Typography>
-                    <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-                      {topPerformingRegion ? `${new Intl.NumberFormat().format(topPerformingRegion.order_count || 0)} orders` : 'No data available'}
-                    </Typography>
-                  </CardContent>
-                </Card>
-              </Grid>
-              
-              <Grid item xs={12} md={4}>
-                <Card>
-                  <CardContent>
-                    <Typography variant="h6" gutterBottom>
-                      Fastest Delivery Region
-                    </Typography>
-                    {fastestRegion ? (
-                      <>
-                        <Typography variant="body1">
-                          {fastestRegion.customer_state}
-                        </Typography>
-                        <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-                          {(fastestRegion.avg_delivery_days || 0).toFixed(1)} days average delivery
-                        </Typography>
-                      </>
-                    ) : (
-                      <Typography variant="body1">No data available</Typography>
-                    )}
-                  </CardContent>
-                </Card>
-              </Grid>
-              
-              <Grid item xs={12} md={4}>
-                <Card>
-                  <CardContent>
-                    <Typography variant="h6" gutterBottom>
-                      Highest Value Region
-                    </Typography>
-                    {highestValueRegion ? (
-                      <>
-                        <Typography variant="body1">
-                          {highestValueRegion.customer_state}
-                        </Typography>
-                        <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-                          ${new Intl.NumberFormat().format(highestValueRegion.total_sales || 0)} total sales
-                        </Typography>
-                      </>
-                    ) : (
-                      <Typography variant="body1">No data available</Typography>
-                    )}
-                  </CardContent>
-                </Card>
-              </Grid>
-            </Grid>
           </Paper>
         </Grid>
       </Grid>

@@ -1,5 +1,5 @@
 import React, { useMemo } from 'react';
-import { Box, Typography } from '@mui/material';
+import { Box, Typography, useTheme } from '@mui/material';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, Legend } from 'recharts';
 
 /**
@@ -9,8 +9,22 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContaine
  * @param {Array} props.categories Array of category names
  * @param {Object} props.categoryData Object with category data, where each key corresponds to a category name and its value is an array of data rows.
  * @param {String} props.chartType Type of chart to display ('pie' or 'bar', defaults to 'bar')
+ * @param {Array} props.chartColors Optional array of colors to use for the chart
  */
-const TopCategoriesChart = ({ categories, categoryData, chartType = 'bar' }) => {
+const TopCategoriesChart = ({ categories, categoryData, chartType = 'bar', chartColors }) => {
+  const theme = useTheme();
+  
+  // Define default colors based on theme if not provided
+  const COLORS = chartColors || [
+    theme.palette.primary.main,
+    theme.palette.secondary.main,
+    theme.palette.success.main,
+    theme.palette.warning.main,
+    theme.palette.error.main,
+    theme.palette.info.main,
+    theme.palette.grey[500]
+  ];
+  
   // Calculate total demand for each category with robust error handling.
   const chartData = useMemo(() => {
     // Ensure categories is a valid array and categoryData is a non-null object.
@@ -39,45 +53,123 @@ const TopCategoriesChart = ({ categories, categoryData, chartType = 'bar' }) => 
   // If total demand is zero, render a friendly message.
   if (totalDemandSum === 0) {
     return (
-      <Box sx={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-        <Typography variant="body1" color="text.secondary">
+      <Box 
+        sx={{ 
+          width: '100%', 
+          height: '100%', 
+          display: 'flex', 
+          alignItems: 'center', 
+          justifyContent: 'center',
+          flexDirection: 'column',
+          gap: 2,
+          color: theme.palette.text.secondary,
+          p: 3
+        }}
+      >
+        <Box
+          component="span"
+          sx={{
+            display: 'inline-block',
+            p: 1,
+            borderRadius: '50%',
+            bgcolor: theme.palette.action.hover,
+            width: 60,
+            height: 60,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center'
+          }}
+        >
+          <Box
+            component="span"
+            sx={{
+              fontSize: '2rem',
+              lineHeight: 1
+            }}
+          >
+            📊
+          </Box>
+        </Box>
+        <Typography variant="h6" color="text.secondary" align="center">
           No demand data available
+        </Typography>
+        <Typography variant="body2" color="text.secondary" align="center">
+          Run the analysis to generate category data
         </Typography>
       </Box>
     );
   }
 
-  // Colors for the chart
-  const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#A4DE6C', '#8884D8', '#82CA9D'];
+  // Format the value for display
+  const formatValue = (value) => {
+    return new Intl.NumberFormat().format(value);
+  };
   
   return (
-    <Box sx={{ width: '100%', height: '100%' }}>
+    <Box sx={{ width: '100%', height: '100%', position: 'relative' }}>
       <ResponsiveContainer width="100%" height="100%">
         <BarChart
           data={chartData}
           layout="vertical"
-          margin={{ top: 5, right: 30, left: 80, bottom: 5 }}
+          margin={{ top: 5, right: 30, left: 80, bottom: 30 }}
         >
-          <CartesianGrid strokeDasharray="3 3" />
-          <XAxis type="number" />
+          <CartesianGrid strokeDasharray="3 3" stroke={theme.palette.divider} />
+          <XAxis 
+            type="number" 
+            tick={{ fill: theme.palette.text.secondary }}
+            tickFormatter={value => value >= 1000 ? `${(value/1000).toFixed(1)}k` : value}
+          />
           <YAxis 
             type="category" 
             dataKey="name" 
-            tick={{ fontSize: 12 }}
+            tick={{ 
+              fill: theme.palette.text.primary, 
+              fontSize: 12, 
+              fontWeight: 500 
+            }}
             width={80}
           />
           <Tooltip 
-            formatter={(value) => new Intl.NumberFormat().format(value)} 
+            formatter={(value) => [`${formatValue(value)} units`, "Demand"]} 
             labelFormatter={(name) => `Category: ${name}`}
+            contentStyle={{
+              backgroundColor: theme.palette.background.paper,
+              border: `1px solid ${theme.palette.divider}`,
+              borderRadius: '8px',
+              boxShadow: theme.shadows[3],
+              padding: '10px 14px'
+            }}
+            itemStyle={{
+              padding: '4px 0'
+            }}
+            labelStyle={{
+              fontWeight: 'bold',
+              marginBottom: '6px',
+              borderBottom: `1px solid ${theme.palette.divider}`,
+              paddingBottom: '6px'
+            }}
           />
-          <Legend />
+          <Legend 
+            verticalAlign="bottom" 
+            height={36}
+            wrapperStyle={{
+              paddingTop: '15px',
+              fontWeight: 500
+            }}
+          />
           <Bar 
             dataKey="value" 
             name="Demand" 
-            fill="#8884d8"
+            fill={theme.palette.primary.main}
+            radius={[0, 4, 4, 0]}
           >
             {chartData.map((entry, index) => (
-              <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+              <Cell 
+                key={`cell-${index}`} 
+                fill={COLORS[index % COLORS.length]} 
+                stroke={theme.palette.background.paper}
+                strokeWidth={1}
+              />
             ))}
           </Bar>
         </BarChart>

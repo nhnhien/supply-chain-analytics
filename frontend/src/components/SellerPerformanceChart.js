@@ -1,7 +1,23 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Box, Typography, Tooltip, IconButton, Divider } from '@mui/material';
-import { ScatterChart, Scatter, XAxis, YAxis, ZAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer } from 'recharts';
-import { Info as InfoIcon } from '@mui/icons-material';
+import { Box, Typography, Tooltip, IconButton, Divider, Paper, useTheme } from '@mui/material';
+import { 
+  ScatterChart, 
+  Scatter, 
+  XAxis, 
+  YAxis, 
+  ZAxis, 
+  CartesianGrid, 
+  Tooltip as RechartsTooltip, 
+  Legend, 
+  ResponsiveContainer,
+  Label 
+} from 'recharts';
+import { 
+  Info as InfoIcon,
+  TrendingUp as TrendingUpIcon,
+  LocalShipping as ShippingIcon,
+  Receipt as ReceiptIcon
+} from '@mui/icons-material';
 
 // Helper function to calculate percentile
 const calculatePercentile = (array, percentile) => {
@@ -16,8 +32,23 @@ const calculatePercentile = (array, percentile) => {
   return sorted[base];
 };
 
-const SellerPerformanceChart = ({ sellerData }) => {
+const SellerPerformanceChart = ({ sellerData, chartColors }) => {
+  const theme = useTheme();
   const [processedData, setProcessedData] = useState([]);
+
+  // Define colors for clusters - use theme colors if available
+  const clusterColors = chartColors || {
+    0: theme.palette.success.main, // High performers - green
+    1: theme.palette.warning.main, // Average performers - amber
+    2: theme.palette.error.main    // Low performers - orange/red
+  };
+  
+  // Define cluster names for legend
+  const clusterNames = {
+    0: 'High Performers',
+    1: 'Average Performers',
+    2: 'Low Performers'
+  };
 
   // Process and transform data when it changes
   useEffect(() => {
@@ -134,39 +165,46 @@ const SellerPerformanceChart = ({ sellerData }) => {
     
     return [Math.max(20, minZ), Math.min(100, maxZ)];
   }, [processedData]);
-
-  // Define colors for clusters
-  const clusterColors = {
-    0: '#00C49F', // High performers - green
-    1: '#FFBB28', // Average performers - amber
-    2: '#FF8042'  // Low performers - orange/red
-  };
-  
-  // Define cluster names for legend
-  const clusterNames = {
-    0: 'High Performers',
-    1: 'Average Performers',
-    2: 'Low Performers'
-  };
   
   // Custom tooltip component for scatter chart
   const CustomTooltip = ({ active, payload }) => {
     if (active && payload && payload.length) {
       const data = payload[0].payload;
       return (
-        <Box sx={{ bgcolor: 'background.paper', p: 1, border: '1px solid #ccc', maxWidth: 220 }}>
-          <Typography variant="subtitle2">{data.name}</Typography>
-          <Divider sx={{ my: 0.5 }} />
-          <Typography variant="body2">
-            Sales: ${data.original.sales.toLocaleString()}
+        <Paper elevation={3} sx={{ 
+          p: 1.5, 
+          maxWidth: 220,
+          borderRadius: 1,
+          boxShadow: theme.shadows[3]
+        }}>
+          <Typography variant="subtitle2" fontWeight="bold" sx={{ 
+            pb: 0.5, 
+            borderBottom: `1px solid ${theme.palette.divider}`,
+            color: theme.palette.primary.main
+          }}>
+            {data.name}
           </Typography>
-          <Typography variant="body2">
-            Processing Time: {data.original.processingTime.toFixed(1)} days
-          </Typography>
-          <Typography variant="body2">
-            Order Count: {data.original.orderCount}
-          </Typography>
-        </Box>
+          <Box sx={{ pt: 1 }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', mb: 0.5 }}>
+              <TrendingUpIcon fontSize="small" sx={{ mr: 1, color: theme.palette.success.main }} />
+              <Typography variant="body2">
+                <strong>Sales:</strong> ${data.original.sales.toLocaleString()}
+              </Typography>
+            </Box>
+            <Box sx={{ display: 'flex', alignItems: 'center', mb: 0.5 }}>
+              <ShippingIcon fontSize="small" sx={{ mr: 1, color: theme.palette.primary.main }} />
+              <Typography variant="body2">
+                <strong>Processing Time:</strong> {data.original.processingTime.toFixed(1)} days
+              </Typography>
+            </Box>
+            <Box sx={{ display: 'flex', alignItems: 'center' }}>
+              <ReceiptIcon fontSize="small" sx={{ mr: 1, color: theme.palette.info.main }} />
+              <Typography variant="body2">
+                <strong>Order Count:</strong> {data.original.orderCount}
+              </Typography>
+            </Box>
+          </Box>
+        </Paper>
       );
     }
     return null;
@@ -182,10 +220,39 @@ const SellerPerformanceChart = ({ sellerData }) => {
         alignItems: 'center', 
         justifyContent: 'center',
         flexDirection: 'column',
-        p: 2 
+        p: 2,
+        color: theme.palette.text.secondary
       }}>
-        <Typography color="text.secondary" align="center">
+        <Box
+          component="span"
+          sx={{
+            display: 'inline-block',
+            p: 1,
+            borderRadius: '50%',
+            bgcolor: theme.palette.action.hover,
+            width: 60,
+            height: 60,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            mb: 2
+          }}
+        >
+          <Box
+            component="span"
+            sx={{
+              fontSize: '2rem',
+              lineHeight: 1
+            }}
+          >
+            📊
+          </Box>
+        </Box>
+        <Typography variant="h6" color="text.secondary" align="center">
           No seller performance data available
+        </Typography>
+        <Typography variant="body2" color="text.secondary" align="center" sx={{ mt: 1 }}>
+          Run the seller analysis to generate performance clusters
         </Typography>
       </Box>
     );
@@ -194,10 +261,20 @@ const SellerPerformanceChart = ({ sellerData }) => {
   return (
     <Box sx={{ width: '100%', height: '100%', position: 'relative' }}>
       {/* Info tooltip to explain data normalization */}
-      <Tooltip title="Data has been normalized for better visualization. Hover over data points to see actual values.">
+      <Tooltip 
+        title="Data has been normalized for better visualization. Hover over data points to see actual values."
+        arrow
+        placement="top"
+      >
         <IconButton 
           size="small" 
-          sx={{ position: 'absolute', top: 0, right: 0, zIndex: 2 }}
+          sx={{ 
+            position: 'absolute', 
+            top: 0, 
+            right: 0, 
+            zIndex: 2,
+            color: theme.palette.info.main
+          }}
           aria-label="Visualization information"
         >
           <InfoIcon fontSize="small" />
@@ -205,29 +282,64 @@ const SellerPerformanceChart = ({ sellerData }) => {
       </Tooltip>
       
       <ResponsiveContainer width="100%" height="100%">
-        <ScatterChart margin={{ top: 20, right: 20, bottom: 10, left: 10 }}>
-          <CartesianGrid strokeDasharray="3 3" />
+        <ScatterChart margin={{ top: 20, right: 30, bottom: 30, left: 20 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke={theme.palette.divider} />
           <XAxis
             type="number"
             dataKey="x"
             name="Sales"
-            label={{ value: 'Sales', position: 'bottom', offset: -5 }}
-          />
+            tick={{ fill: theme.palette.text.secondary }}
+            domain={[0, 100]}
+          >
+            <Label 
+              value="Sales" 
+              position="bottom" 
+              offset={-5}
+              style={{ 
+                textAnchor: 'middle',
+                fill: theme.palette.text.secondary,
+                fontSize: 12
+              }}
+            />
+          </XAxis>
           <YAxis
             type="number"
             dataKey="y"
             name="Processing Time"
-            label={{ value: 'Processing Time', angle: -90, position: 'insideLeft', offset: 10 }}
-          />
+            tick={{ fill: theme.palette.text.secondary }}
+            domain={[0, 100]}
+          >
+            <Label 
+              value="Processing Time" 
+              angle={-90} 
+              position="insideLeft" 
+              offset={10}
+              style={{ 
+                textAnchor: 'middle',
+                fill: theme.palette.text.secondary,
+                fontSize: 12
+              }}
+            />
+          </YAxis>
           <ZAxis type="number" dataKey="z" range={dynamicZRange} />
-          <RechartsTooltip content={<CustomTooltip />} />
-          <Legend />
+          <RechartsTooltip 
+            content={<CustomTooltip />}
+            cursor={{ strokeDasharray: '3 3', stroke: theme.palette.divider }}
+          />
+          <Legend 
+            formatter={(value) => <span style={{ color: theme.palette.text.primary, fontWeight: 500 }}>{value}</span>}
+            iconSize={10}
+            wrapperStyle={{ paddingTop: 10 }}
+          />
           {processedData.map(cluster => (
             <Scatter
               key={cluster.cluster}
               name={clusterNames[cluster.cluster] || `Cluster ${cluster.cluster}`}
               data={cluster.data}
-              fill={clusterColors[cluster.cluster] || '#8884d8'}
+              fill={clusterColors[cluster.cluster] || theme.palette.primary.main}
+              shape="circle"
+              strokeWidth={2}
+              stroke={theme.palette.background.paper}
             />
           ))}
         </ScatterChart>

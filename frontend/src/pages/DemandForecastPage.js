@@ -1,6 +1,22 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Grid, Paper, Typography, Box, FormControl, InputLabel, Select, MenuItem, Alert, AlertTitle } from '@mui/material';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, BarChart, Bar, Cell } from 'recharts';
+import { 
+  Grid, Paper, Typography, Box, FormControl, InputLabel, Select, MenuItem, 
+  Alert, AlertTitle, Divider, useTheme, Chip, Card, CardContent,
+  Tooltip, IconButton
+} from '@mui/material';
+import { 
+  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, 
+  Legend, ResponsiveContainer, BarChart, Bar, Cell 
+} from 'recharts';
+import {
+  TrendingUp as TrendingUpIcon,
+  TrendingDown as TrendingDownIcon,
+  Info as InfoIcon,
+  Analytics as AnalyticsIcon,
+  Category as CategoryIcon,
+  AssessmentOutlined as AssessmentIcon,
+  Timeline as TimelineIcon
+} from '@mui/icons-material';
 
 // Helper functions
 const getValidArray = (arr) =>
@@ -20,7 +36,8 @@ const getCategoryData = (data, category) => {
     : [];
 };
 
-const ForecastInterpretation = ({ forecast }) => {
+// Move useTheme outside the component to fix the React Hook conditional usage error
+const ForecastInterpretation = ({ forecast, theme }) => {
   if (!forecast) return null;
 
   const growthRateRaw = parseNumericValue(forecast.growth_rate, 0);
@@ -98,22 +115,44 @@ const ForecastInterpretation = ({ forecast }) => {
     actionableGuidance = "Recommendation: Review inventory policies quarterly to ensure alignment with demand patterns.";
   }
 
+  // Get confidence level color
+  const getConfidenceColor = (mapeValue) => {
+    if (mapeValue > 60) return 'error.main';
+    if (mapeValue > 30) return 'warning.main';
+    return 'success.main';
+  };
+
   return (
     <Box sx={{ mt: 'auto' }}>
-      <Typography variant="subtitle2" gutterBottom>
+      <Divider sx={{ my: 2 }} />
+      <Typography variant="subtitle1" gutterBottom fontWeight="medium" sx={{ 
+        display: 'flex', 
+        alignItems: 'center',
+        color: theme.palette.primary.main
+      }}>
+        <InfoIcon sx={{ mr: 1, fontSize: 20 }} />
         Forecast Interpretation
       </Typography>
-      <Typography variant="body2" sx={{ mb: 2 }}>
+      <Typography variant="body2" sx={{ mb: 2, lineHeight: 1.6 }}>
         {interpretationText}
       </Typography>
-      <Typography variant="body2" fontWeight="medium" color="primary.main">
-        {actionableGuidance}
-      </Typography>
+      <Alert 
+        severity={mape > 60 ? "warning" : growthRate > 20 || growthRate < -20 ? "info" : "success"}
+        variant="outlined"
+        icon={mape > 60 ? <InfoIcon /> : growthRate > 20 ? <TrendingUpIcon /> : growthRate < -20 ? <TrendingDownIcon /> : <InfoIcon />}
+        sx={{ mb: 1 }}
+      >
+        <Typography variant="body2" fontWeight="medium">
+          {actionableGuidance}
+        </Typography>
+      </Alert>
     </Box>
   );
 };
 
 const DemandForecastPage = ({ data }) => {
+  const theme = useTheme();
+  
   // Memoize safeData so that it only updates when data changes.
   const safeData = useMemo(() => data || {}, [data]);
 
@@ -446,13 +485,32 @@ const DemandForecastPage = ({ data }) => {
   // If no forecast or performance metrics exist, display an alert.
   if (!safeData.forecastReport && !safeData.performanceMetrics) {
     return (
-      <Box>
-        <Typography variant="h4" gutterBottom>
+      <Box sx={{ p: 3 }}>
+        <Typography variant="h4" gutterBottom sx={{ 
+          fontWeight: 'bold',
+          color: theme.palette.primary.main,
+          pb: 1,
+          borderBottom: `2px solid ${theme.palette.divider}`
+        }}>
+          <TimelineIcon sx={{ mr: 1, verticalAlign: 'text-bottom' }} />
           Demand Forecasting
         </Typography>
-        <Alert severity="info">
-          <AlertTitle>No forecast data available</AlertTitle>
-          No forecast data has been generated yet. Please run the analysis to generate forecasts.
+        <Alert 
+          severity="info"
+          variant="filled"
+          sx={{ 
+            mt: 4, 
+            py: 2,
+            boxShadow: theme.shadows[3],
+            '& .MuiAlert-icon': {
+              fontSize: '2rem'
+            }
+          }}
+        >
+          <AlertTitle sx={{ fontWeight: 'bold', fontSize: '1.1rem' }}>No forecast data available</AlertTitle>
+          <Typography variant="body1">
+            No forecast data has been generated yet. Please run the analysis to generate forecasts.
+          </Typography>
         </Alert>
       </Box>
     );
@@ -467,19 +525,47 @@ const DemandForecastPage = ({ data }) => {
           
       if (categoryForecast) {
         return (
-          <Box display="flex" flexDirection="column" justifyContent="center" alignItems="center" height="100%">
-            <Typography variant="body1" sx={{ mb: 2 }}>
+          <Box display="flex" flexDirection="column" justifyContent="center" alignItems="center" height="100%" p={3}>
+            <Typography variant="body1" sx={{ mb: 3, fontWeight: 'medium', color: 'text.primary' }}>
               {forecastNote || "No historical data available for visualization"}
             </Typography>
-            <Typography variant="body2" color="text.secondary">
-              Forecast growth rate: {categoryForecast.growth_rate?.toFixed(2)}%
-            </Typography>
-            <Typography variant="body2" color="text.secondary">
-              Average historical demand: {Math.round(categoryForecast.avg_historical_demand || 0)} units
-            </Typography>
-            <Typography variant="body2" color="text.secondary">
-              Next month forecast: {Math.round(categoryForecast.forecast_demand || categoryForecast.next_month_forecast || 0)} units
-            </Typography>
+            <Card variant="outlined" sx={{ width: '100%', maxWidth: 400, boxShadow: theme.shadows[2] }}>
+              <CardContent>
+                <Typography variant="subtitle1" color="primary" gutterBottom fontWeight="medium">
+                  Forecast Summary
+                </Typography>
+                <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
+                  {categoryForecast.growth_rate > 0 ? (
+                    <TrendingUpIcon color="success" sx={{ mr: 1 }} />
+                  ) : (
+                    <TrendingDownIcon color="error" sx={{ mr: 1 }} />
+                  )}
+                  <Typography variant="body1">
+                    Growth rate: <strong>{categoryForecast.growth_rate?.toFixed(2)}%</strong>
+                  </Typography>
+                </Box>
+                <Typography variant="body2" color="text.secondary" sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
+                  <Box component="span" sx={{ 
+                    width: 8, 
+                    height: 8, 
+                    borderRadius: '50%', 
+                    bgcolor: 'info.main',
+                    mr: 1 
+                  }} />
+                  Average historical demand: <strong style={{ marginLeft: 4 }}>{Math.round(categoryForecast.avg_historical_demand || 0)} units</strong>
+                </Typography>
+                <Typography variant="body2" color="text.secondary" sx={{ display: 'flex', alignItems: 'center' }}>
+                  <Box component="span" sx={{ 
+                    width: 8, 
+                    height: 8, 
+                    borderRadius: '50%', 
+                    bgcolor: 'success.main',
+                    mr: 1 
+                  }} />
+                  Next month forecast: <strong style={{ marginLeft: 4 }}>{Math.round(categoryForecast.forecast_demand || categoryForecast.next_month_forecast || 0)} units</strong>
+                </Typography>
+              </CardContent>
+            </Card>
           </Box>
         );
       }
@@ -495,20 +581,61 @@ const DemandForecastPage = ({ data }) => {
     
     return (
       <LineChart data={forecastData} margin={{ top: 20, right: 30, left: 20, bottom: 30 }}>
-        <CartesianGrid strokeDasharray="3 3" />
-        <XAxis dataKey="date" tickFormatter={formatDate} label={{ value: 'Month', position: 'bottom', offset: 0 }} />
-        <YAxis label={{ value: 'Order Count', angle: -90, position: 'insideLeft' }} domain={[0, (dataMax) => Math.max(dataMax * 1.1, 10)]} />
-        <Tooltip formatter={(value) => new Intl.NumberFormat().format(value)} labelFormatter={formatDate} />
-        <Legend />
+        <CartesianGrid strokeDasharray="3 3" stroke={theme.palette.divider} />
+        <XAxis 
+          dataKey="date" 
+          tickFormatter={formatDate} 
+          stroke={theme.palette.text.secondary}
+          label={{ 
+            value: 'Month', 
+            position: 'bottom', 
+            offset: 0,
+            style: { 
+              textAnchor: 'middle',
+              fill: theme.palette.text.secondary
+            } 
+          }} 
+        />
+        <YAxis 
+          label={{ 
+            value: 'Order Count', 
+            angle: -90, 
+            position: 'insideLeft', 
+            style: { 
+              textAnchor: 'middle',
+              fill: theme.palette.text.secondary
+            }
+          }} 
+          domain={[0, (dataMax) => Math.max(dataMax * 1.1, 10)]} 
+          stroke={theme.palette.text.secondary}
+        />
+        <RechartsTooltip 
+          formatter={(value) => new Intl.NumberFormat().format(value)} 
+          labelFormatter={formatDate}
+          contentStyle={{ 
+            backgroundColor: theme.palette.background.paper,
+            border: `1px solid ${theme.palette.divider}`,
+            borderRadius: 8,
+            boxShadow: theme.shadows[3]
+          }}
+        />
+        <Legend 
+          verticalAlign="bottom" 
+          height={36}
+          wrapperStyle={{
+            paddingTop: '15px',
+            fontWeight: 500
+          }}
+        />
         <Line
           type="monotone"
           dataKey="value"
           data={forecastData.filter(d => d.type === 'historical')}
           name="Historical"
-          stroke="#8884d8"
+          stroke={theme.palette.primary.main}
           strokeWidth={2}
-          dot={{ r: 4 }}
-          activeDot={{ r: 8 }}
+          dot={{ r: 4, fill: theme.palette.primary.main, stroke: theme.palette.background.paper, strokeWidth: 2 }}
+          activeDot={{ r: 6, fill: theme.palette.primary.main, stroke: theme.palette.background.paper, strokeWidth: 2 }}
           connectNulls
           isAnimationActive={true}
         />
@@ -519,10 +646,10 @@ const DemandForecastPage = ({ data }) => {
               dataKey="value"
               data={forecastData.filter(d => d.type === 'forecast')}
               name="Forecast"
-              stroke="#82ca9d"
+              stroke={theme.palette.success.main}
               strokeWidth={2}
               strokeDasharray="5 5"
-              dot={{ r: 4 }}
+              dot={{ r: 4, fill: theme.palette.success.main, stroke: theme.palette.background.paper, strokeWidth: 2 }}
               connectNulls
               isAnimationActive={true}
             />
@@ -531,22 +658,24 @@ const DemandForecastPage = ({ data }) => {
               dataKey="upperBound"
               data={forecastData.filter(d => d.type === 'forecast')}
               name="Upper Bound"
-              stroke="#ffc658"
+              stroke={theme.palette.warning.light}
               strokeWidth={1}
               strokeDasharray="3 3"
               dot={false}
               activeDot={false}
+              isAnimationActive={false}
             />
             <Line
               type="monotone"
               dataKey="lowerBound"
               data={forecastData.filter(d => d.type === 'forecast')}
               name="Lower Bound"
-              stroke="#ff8042"
+              stroke={theme.palette.warning.light}
               strokeWidth={1}
               strokeDasharray="3 3"
               dot={false}
               activeDot={false}
+              isAnimationActive={false}
             />
           </>
         )}
@@ -554,16 +683,105 @@ const DemandForecastPage = ({ data }) => {
     );
   };
 
+  // Generate status chip based on forecast metrics
+  const getStatusChip = (forecast) => {
+    if (!forecast) return null;
+    
+    const growthRate = parseNumericValue(forecast.growth_rate, 0);
+    const mape = parseNumericValue(forecast.mape, 30);
+    
+    let color = 'default';
+    let label = 'Unknown';
+    let icon = null;
+    
+    if (mape > 60) {
+      color = 'error';
+      label = 'Low Confidence';
+    } else if (mape > 30) {
+      color = 'warning';
+      label = 'Medium Confidence';
+    } else {
+      color = 'success';
+      label = 'High Confidence';
+    }
+    
+    return (
+      <Chip 
+        size="small"
+        color={color}
+        label={label}
+        sx={{ fontWeight: 'medium' }}
+      />
+    );
+  };
+
   return (
-    <Box>
-      <Typography variant="h4" gutterBottom>
+    <Box sx={{ p: { xs: 2, sm: 3 } }}>
+      <Typography variant="h4" gutterBottom sx={{ 
+        fontWeight: 'bold',
+        color: theme.palette.primary.main,
+        borderBottom: `2px solid ${theme.palette.divider}`,
+        pb: 1,
+        mb: 3,
+        display: 'flex',
+        alignItems: 'center'
+      }}>
+        <TimelineIcon sx={{ mr: 1 }} />
         Demand Forecasting
       </Typography>
+      
       <Grid container spacing={3}>
         {/* Category Selector */}
         <Grid item xs={12}>
-          <Paper elevation={2} sx={{ p: 2 }}>
-            <FormControl fullWidth>
+          <Paper elevation={3} sx={{ 
+            p: 3, 
+            borderRadius: 2,
+            boxShadow: '0 4px 20px rgba(0,0,0,0.1)'
+          }}>
+            <Box sx={{ 
+              display: 'flex', 
+              flexDirection: { xs: 'column', sm: 'row' },
+              alignItems: { xs: 'flex-start', sm: 'center' },
+              justifyContent: 'space-between',
+              mb: { xs: 2, sm: 0 }
+            }}>
+              <Typography component="h2" variant="h6" gutterBottom={false} sx={{ 
+                color: theme.palette.primary.main,
+                fontWeight: 'bold',
+                display: 'flex',
+                alignItems: 'center',
+                mb: { xs: 2, sm: 0 }
+              }}>
+                <CategoryIcon sx={{ mr: 1 }} /> Select Product Category
+              </Typography>
+              
+              {currentCategoryForecast && currentCategoryForecast[0] && (
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                  {getStatusChip(currentCategoryForecast[0])}
+                  {currentCategoryForecast[0].growth_rate > 0 ? (
+                    <Chip 
+                      icon={<TrendingUpIcon />} 
+                      label={`Growth: ${currentCategoryForecast[0].growth_rate.toFixed(1)}%`} 
+                      color="success" 
+                      size="small"
+                      variant="outlined"
+                    />
+                  ) : (
+                    <Chip 
+                      icon={<TrendingDownIcon />} 
+                      label={`Decline: ${Math.abs(currentCategoryForecast[0].growth_rate).toFixed(1)}%`} 
+                      color="error" 
+                      size="small"
+                      variant="outlined"
+                    />
+                  )}
+                </Box>
+              )}
+            </Box>
+            
+            <Divider sx={{ my: 2 }} />
+            
+            <FormControl fullWidth variant="outlined" sx={{ mt: 1 }}>
               <InputLabel id="category-select-label">Product Category</InputLabel>
               <Select
                 labelId="category-select-label"
@@ -571,13 +789,23 @@ const DemandForecastPage = ({ data }) => {
                 value={selectedCategory}
                 label="Product Category"
                 onChange={handleCategoryChange}
+                sx={{ 
+                  '& .MuiSelect-select': { 
+                    display: 'flex', 
+                    alignItems: 'center' 
+                  }
+                }}
               >
                 {getValidArray(safeData.forecastReport)
                   .filter(forecast => forecast && (forecast.category || forecast.product_category || forecast.product_category_name))
                   .map(forecast => {
                     const categoryName = forecast.category || forecast.product_category || forecast.product_category_name;
                     return (
-                      <MenuItem key={categoryName} value={categoryName}>
+                      <MenuItem key={categoryName} value={categoryName} sx={{ 
+                        display: 'flex', 
+                        alignItems: 'center' 
+                      }}>
+                        <CategoryIcon sx={{ mr: 1, fontSize: 20, color: 'primary.light' }} />
                         {categoryName}
                       </MenuItem>
                     );
@@ -590,23 +818,68 @@ const DemandForecastPage = ({ data }) => {
         {/* Data Quality Alert */}
         {dataQuality === 'Limited' && (
           <Grid item xs={12}>
-            <Alert severity="warning">
-              <AlertTitle>Limited Historical Data</AlertTitle>
-              The '{selectedCategory}' category has limited historical data points, which may affect forecast accuracy. A basic forecast will be generated based on available data.
+            <Alert 
+              severity="warning"
+              variant="filled"
+              icon={<InfoIcon />}
+              sx={{ 
+                borderRadius: 2,
+                boxShadow: theme.shadows[3]
+              }}
+            >
+              <AlertTitle sx={{ fontWeight: 'bold' }}>Limited Historical Data</AlertTitle>
+              <Typography variant="body2">
+                The <strong>'{selectedCategory}'</strong> category has limited historical data points, which may affect forecast accuracy. 
+                A basic forecast will be generated based on available data.
+              </Typography>
             </Alert>
           </Grid>
         )}
 
+        {/* Main content section heading */}
+        <Grid item xs={12}>
+          <Box sx={{ mt: 2, mb: 1 }}>
+            <Typography variant="h5" component="h2" sx={{ 
+              fontWeight: 'medium',
+              borderLeft: `4px solid ${theme.palette.primary.main}`,
+              pl: 2
+            }}>
+              Forecast Analysis
+            </Typography>
+          </Box>
+        </Grid>
+
         {/* Forecast Chart */}
         <Grid item xs={12} lg={8}>
-          <Paper elevation={2} sx={{ p: 2, display: 'flex', flexDirection: 'column', height: 500 }}>
-            <Typography component="h2" variant="h6" color="primary" gutterBottom>
-            Future Demand Forecast for {selectedCategory} (2025+)
+          <Paper elevation={3} sx={{ 
+            p: 3, 
+            display: 'flex', 
+            flexDirection: 'column', 
+            height: 500,
+            borderRadius: 2,
+            boxShadow: '0 4px 20px rgba(0,0,0,0.1)'
+          }}>
+            <Typography component="h2" variant="h6" gutterBottom sx={{ 
+              color: theme.palette.primary.main,
+              fontWeight: 'bold',
+              display: 'flex',
+              alignItems: 'center',
+              borderBottom: `1px solid ${theme.palette.divider}`,
+              pb: 1
+            }}>
+              <AnalyticsIcon sx={{ mr: 1 }} /> Future Demand Forecast for {selectedCategory} (2025+)
             </Typography>
             {forecastNote && (
-              <Typography variant="caption" color="text.secondary" sx={{ mb: 2 }}>
-                {forecastNote}
-              </Typography>
+              <Alert 
+                severity="info" 
+                variant="outlined" 
+                sx={{ mb: 2 }}
+                icon={<InfoIcon />}
+              >
+                <Typography variant="body2">
+                  {forecastNote}
+                </Typography>
+              </Alert>
             )}
             <ResponsiveContainer width="100%" height="100%">
               {renderForecastChart()}
@@ -616,42 +889,228 @@ const DemandForecastPage = ({ data }) => {
 
         {/* Forecast Details */}
         <Grid item xs={12} md={6} lg={4}>
-          <Paper elevation={2} sx={{ p: 2, height: 500, display: 'flex', flexDirection: 'column' }}>
-            <Typography component="h2" variant="h6" color="primary" gutterBottom>
-              Forecast Statistics
+          <Paper elevation={3} sx={{ 
+            p: 3, 
+            height: 500, 
+            display: 'flex', 
+            flexDirection: 'column',
+            borderRadius: 2,
+            boxShadow: '0 4px 20px rgba(0,0,0,0.1)'
+          }}>
+            <Typography component="h2" variant="h6" gutterBottom sx={{ 
+              color: theme.palette.primary.main,
+              fontWeight: 'bold',
+              display: 'flex',
+              alignItems: 'center',
+              borderBottom: `1px solid ${theme.palette.divider}`,
+              pb: 1
+            }}>
+              <AssessmentIcon sx={{ mr: 1 }} /> Forecast Statistics
             </Typography>
             {getValidArray(currentCategoryForecast).map((forecast, index) => (
               <Box key={`${forecast.category}-${index}`} sx={{ mb: 2 }}>
-                {/* Render forecast detail cards (omitted for brevity) */}
+                <Grid container spacing={2} sx={{ mb: 2 }}>
+                  <Grid item xs={6}>
+                    <Card variant="outlined" sx={{ 
+                      height: '100%',
+                      bgcolor: 'background.default',
+                      '&:hover': { boxShadow: 1 },
+                      transition: 'box-shadow 0.3s'
+                    }}>
+                      <CardContent sx={{ p: 2, '&:last-child': { pb: 2 } }}>
+                        <Typography color="text.secondary" variant="body2" gutterBottom>
+                          Historical Avg
+                        </Typography>
+                        <Typography variant="h6" component="div" fontWeight="medium">
+                          {Math.round(forecast.avg_historical_demand || 0)}
+                          <Typography component="span" variant="caption" sx={{ ml: 0.5 }}>
+                            units
+                          </Typography>
+                        </Typography>
+                      </CardContent>
+                    </Card>
+                  </Grid>
+                  <Grid item xs={6}>
+                    <Card variant="outlined" sx={{ 
+                      height: '100%',
+                      bgcolor: 'background.default',
+                      '&:hover': { boxShadow: 1 },
+                      transition: 'box-shadow 0.3s'
+                    }}>
+                      <CardContent sx={{ p: 2, '&:last-child': { pb: 2 } }}>
+                        <Typography color="text.secondary" variant="body2" gutterBottom>
+                          Forecast Demand
+                        </Typography>
+                        <Typography variant="h6" component="div" fontWeight="medium">
+                          {Math.round(forecast.forecast_demand || 0)}
+                          <Typography component="span" variant="caption" sx={{ ml: 0.5 }}>
+                            units
+                          </Typography>
+                        </Typography>
+                      </CardContent>
+                    </Card>
+                  </Grid>
+                  <Grid item xs={6}>
+                    <Card variant="outlined" sx={{ 
+                      height: '100%',
+                      bgcolor: 'background.default',
+                      '&:hover': { boxShadow: 1 },
+                      transition: 'box-shadow 0.3s'
+                    }}>
+                      <CardContent sx={{ p: 2, '&:last-child': { pb: 2 } }}>
+                        <Typography color="text.secondary" variant="body2" gutterBottom>
+                          MAPE
+                        </Typography>
+                        <Typography variant="h6" component="div" fontWeight="medium" color={
+                          forecast.mape > 50 ? 'error.main' : 
+                          forecast.mape > 25 ? 'warning.main' : 
+                          'success.main'
+                        }>
+                          {forecast.mape?.toFixed(1) || 'N/A'}
+                          <Typography component="span" variant="caption" sx={{ ml: 0.5 }}>
+                            %
+                          </Typography>
+                        </Typography>
+                      </CardContent>
+                    </Card>
+                  </Grid>
+                  <Grid item xs={6}>
+                    <Card variant="outlined" sx={{ 
+                      height: '100%',
+                      bgcolor: 'background.default',
+                      '&:hover': { boxShadow: 1 },
+                      transition: 'box-shadow 0.3s'
+                    }}>
+                      <CardContent sx={{ p: 2, '&:last-child': { pb: 2 } }}>
+                        <Typography color="text.secondary" variant="body2" gutterBottom>
+                          Growth Rate
+                        </Typography>
+                        <Typography variant="h6" component="div" fontWeight="medium" sx={{ 
+                          display: 'flex', 
+                          alignItems: 'center',
+                          color: forecast.growth_rate >= 0 ? 'success.main' : 'error.main'
+                        }}>
+                          {forecast.growth_rate >= 0 ? (
+                            <TrendingUpIcon fontSize="small" sx={{ mr: 0.5 }} />
+                          ) : (
+                            <TrendingDownIcon fontSize="small" sx={{ mr: 0.5 }} />
+                          )}
+                          {Math.abs(forecast.growth_rate)?.toFixed(1) || '0.0'}
+                          <Typography component="span" variant="caption" sx={{ ml: 0.5 }}>
+                            %
+                          </Typography>
+                        </Typography>
+                      </CardContent>
+                    </Card>
+                  </Grid>
+                </Grid>
               </Box>
             ))}
-            <ForecastInterpretation forecast={getValidArray(currentCategoryForecast)[0]} />
+            <ForecastInterpretation 
+              forecast={getValidArray(currentCategoryForecast)[0]} 
+              theme={theme} 
+            />
           </Paper>
+        </Grid>
+
+        {/* Section heading for model performance */}
+        <Grid item xs={12}>
+          <Box sx={{ mt: 4, mb: 1 }}>
+            <Typography variant="h5" component="h2" sx={{ 
+              fontWeight: 'medium',
+              borderLeft: `4px solid ${theme.palette.secondary.main}`,
+              pl: 2
+            }}>
+              Model Performance
+            </Typography>
+          </Box>
         </Grid>
 
         {/* Model Performance */}
         <Grid item xs={12}>
-          <Paper elevation={2} sx={{ p: 2 }}>
-            <Typography component="h2" variant="h6" color="primary" gutterBottom>
-              Forecast Model Performance by Category
+          <Paper elevation={3} sx={{ 
+            p: 3,
+            borderRadius: 2,
+            boxShadow: '0 4px 20px rgba(0,0,0,0.1)' 
+          }}>
+            <Typography component="h2" variant="h6" gutterBottom sx={{ 
+              color: theme.palette.secondary.main,
+              fontWeight: 'bold',
+              display: 'flex',
+              alignItems: 'center',
+              borderBottom: `1px solid ${theme.palette.divider}`,
+              pb: 1
+            }}>
+              <AssessmentIcon sx={{ mr: 1 }} /> Forecast Model Performance by Category
             </Typography>
-            <ResponsiveContainer width="100%" height={300}>
+            <Box sx={{ mt: 2 }}>
+              <Tooltip title="Lower MAPE values indicate better forecast accuracy">
+                <Typography variant="body2" color="text.secondary" sx={{ mb: 2, display: 'flex', alignItems: 'center' }}>
+                  <InfoIcon fontSize="small" sx={{ mr: 0.5 }} />
+                  MAPE: Mean Absolute Percentage Error - Lower values indicate better accuracy
+                </Typography>
+              </Tooltip>
+            </Box>
+            <ResponsiveContainer width="100%" height={400}>
               {performanceMetrics.length > 0 ? (
-                <BarChart data={performanceMetrics} margin={{ top: 20, right: 30, left: 20, bottom: 60 }}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="category" angle={-45} textAnchor="end" height={70} />
-                  <YAxis label={{ value: 'MAPE (%)', angle: -90, position: 'insideLeft' }} domain={[0, (dataMax) => Math.min(dataMax, 100)]} />
-                  <Tooltip formatter={(value) => (value == null ? 'N/A' : value > 100 ? '> 100%' : `${value.toFixed(2)}%`)} />
-                  <Legend />
-                  <Bar dataKey="mape" name="Mean Absolute Percentage Error (MAPE)">
+                <BarChart data={performanceMetrics} margin={{ top: 20, right: 30, left: 20, bottom: 70 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke={theme.palette.divider} />
+                  <XAxis 
+                    dataKey="category" 
+                    angle={-45} 
+                    textAnchor="end" 
+                    height={80} 
+                    tick={{ fill: theme.palette.text.secondary, fontSize: 12 }}
+                    tickMargin={10}
+                  />
+                  <YAxis 
+                    label={{ 
+                      value: 'MAPE (%)', 
+                      angle: -90, 
+                      position: 'insideLeft', 
+                      style: { 
+                        textAnchor: 'middle',
+                        fill: theme.palette.text.secondary,
+                        fontSize: 12
+                      } 
+                    }} 
+                    domain={[0, (dataMax) => Math.min(dataMax, 100)]} 
+                    tick={{ fill: theme.palette.text.secondary }}
+                  />
+                  <RechartsTooltip 
+                    formatter={(value) => (value == null ? 'N/A' : value > 100 ? '> 100%' : `${value.toFixed(2)}%`)}
+                    contentStyle={{ 
+                      backgroundColor: theme.palette.background.paper,
+                      border: `1px solid ${theme.palette.divider}`,
+                      borderRadius: 8,
+                      boxShadow: theme.shadows[3]
+                    }}
+                  />
+                  <Legend 
+                    verticalAlign="top" 
+                    height={36}
+                    wrapperStyle={{
+                      paddingBottom: '10px',
+                      fontWeight: 500
+                    }}
+                  />
+                  <Bar 
+                    dataKey="mape" 
+                    name="Mean Absolute Percentage Error (MAPE)"
+                    radius={[4, 4, 0, 0]}
+                  >
                     {performanceMetrics.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={entry && entry.mapeColor ? entry.mapeColor : '#cccccc'} />
+                      <Cell 
+                        key={`cell-${index}`} 
+                        fill={entry && entry.mapeColor ? entry.mapeColor : theme.palette.grey[400]} 
+                      />
                     ))}
                   </Bar>
                 </BarChart>
               ) : (
                 <Box display="flex" justifyContent="center" alignItems="center" height="100%">
-                  <Typography color="text.secondary">
+                  <Typography color="text.secondary" variant="body1" sx={{ textAlign: 'center' }}>
+                    <InfoIcon sx={{ fontSize: 40, opacity: 0.5, mb: 1, display: 'block', mx: 'auto' }} />
                     No model performance metrics available
                   </Typography>
                 </Box>
@@ -663,5 +1122,4 @@ const DemandForecastPage = ({ data }) => {
     </Box>
   );
 };
-
 export default DemandForecastPage;

@@ -1,7 +1,8 @@
 import React, { useState, useMemo } from 'react';
 import { 
   Grid, Paper, Typography, Box, Card, CardContent, 
-  FormControl, InputLabel, Select, MenuItem, Alert, AlertTitle, List, ListItem, ListItemText, Avatar, Tooltip 
+  FormControl, InputLabel, Select, MenuItem, Alert, AlertTitle, List, ListItem, ListItemText, Avatar, Tooltip,
+  Divider, useTheme, useMediaQuery
 } from '@mui/material';
 import { 
   TrendingUp as TrendingUpIcon,
@@ -13,13 +14,16 @@ import {
   Info as InfoIcon
 } from '@mui/icons-material';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer, BarChart, Bar, Cell } from 'recharts';
-import KPICard from '../components/KPICard';
 
 // Import custom components
 import TopCategoriesChart from '../components/TopCategoriesChart';
 import SellerPerformanceChart from '../components/SellerPerformanceChart';
+import KPICard from '../components/KPICard';
 
 const DashboardPage = ({ data }) => {
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
+  
   // Always define this regardless of data existence (solves the React Hook conditional usage error)
   const formattedKPIs = useMemo(() => {
     if (!data || !data.kpis) {
@@ -87,7 +91,14 @@ const DashboardPage = ({ data }) => {
   }, [data]);
 
   if (!data) {
-    return <Typography>No dashboard data available</Typography>;
+    return (
+      <Box sx={{ p: 4, textAlign: 'center' }}>
+        <Alert severity="info">
+          <AlertTitle>No Data Available</AlertTitle>
+          No dashboard data is currently available. Please check your connection or try again later.
+        </Alert>
+      </Box>
+    );
   }
   
   // Destructure with default values to prevent undefined errors
@@ -99,9 +110,26 @@ const DashboardPage = ({ data }) => {
     recommendations = { inventory: [] } 
   } = data;
 
+  // Chart colors for consistency
+  const chartColors = {
+    primary: theme.palette.primary.main,
+    secondary: theme.palette.secondary.main,
+    success: theme.palette.success.main,
+    warning: theme.palette.warning.main,
+    error: theme.palette.error.main,
+    info: theme.palette.info.main,
+    chart: ['#8884d8', '#82ca9d', '#ffc658', '#ff8042', '#a4de6c']
+  };
+
   return (
-    <Box>
-      <Typography variant="h4" gutterBottom>
+    <Box sx={{ p: { xs: 1, sm: 2, md: 3 } }}>
+      <Typography variant="h4" component="h1" gutterBottom sx={{ 
+        fontWeight: 'bold', 
+        color: theme.palette.primary.main,
+        borderBottom: `2px solid ${theme.palette.divider}`,
+        pb: 1,
+        mb: 3
+      }}>
         Supply Chain Analytics Dashboard
       </Typography>
       
@@ -112,8 +140,16 @@ const DashboardPage = ({ data }) => {
             title="Processing Time"
             value={`${formattedKPIs.processingTime} days`}
             icon={<ShippingIcon />}
-            color="#1976d2"
+            color={chartColors.primary}
             isEstimated={data.kpis?.estimated_fields && data.kpis.estimated_fields.includes('avg_processing_time')}
+            sx={{ 
+              height: '100%',
+              transition: 'transform 0.2s',
+              '&:hover': {
+                transform: 'translateY(-4px)',
+                boxShadow: theme.shadows[4]
+              }
+            }}
           />
         </Grid>
         <Grid item xs={12} sm={6} md={4} lg={2}>
@@ -121,7 +157,15 @@ const DashboardPage = ({ data }) => {
             title="Forecast Growth"
             value={`${formattedKPIs.forecastGrowth}%`}
             icon={<TrendingUpIcon />}
-            color="#2e7d32"
+            color={chartColors.success}
+            sx={{ 
+              height: '100%',
+              transition: 'transform 0.2s',
+              '&:hover': {
+                transform: 'translateY(-4px)',
+                boxShadow: theme.shadows[4]
+              }
+            }}
           />
         </Grid>
         <Grid item xs={12} sm={6} md={4} lg={2}>
@@ -129,7 +173,15 @@ const DashboardPage = ({ data }) => {
             title="On-Time Delivery"
             value={`${formattedKPIs.onTimeDelivery}%`}
             icon={<CheckCircleIcon />}
-            color="#ed6c02"
+            color={chartColors.warning}
+            sx={{ 
+              height: '100%',
+              transition: 'transform 0.2s',
+              '&:hover': {
+                transform: 'translateY(-4px)',
+                boxShadow: theme.shadows[4]
+              }
+            }}
           />
         </Grid>
         <Grid item xs={12} sm={6} md={4} lg={2}>
@@ -137,7 +189,15 @@ const DashboardPage = ({ data }) => {
             title="Perfect Order Rate"
             value={`${formattedKPIs.perfectOrderRate}%`}
             icon={<ReportIcon />}
-            color="#9c27b0"
+            color={chartColors.secondary}
+            sx={{ 
+              height: '100%',
+              transition: 'transform 0.2s',
+              '&:hover': {
+                transform: 'translateY(-4px)',
+                boxShadow: theme.shadows[4]
+              }
+            }}
           />
         </Grid>
         <Grid item xs={12} sm={6} md={4} lg={2}>
@@ -145,7 +205,15 @@ const DashboardPage = ({ data }) => {
             title="Inventory Turnover"
             value={`${formattedKPIs.inventoryTurnover}x`}
             icon={<InventoryIcon />}
-            color="#d32f2f"
+            color={chartColors.error}
+            sx={{ 
+              height: '100%',
+              transition: 'transform 0.2s',
+              '&:hover': {
+                transform: 'translateY(-4px)',
+                boxShadow: theme.shadows[4]
+              }
+            }}
           />
         </Grid>
         <Grid item xs={12} sm={6} md={4} lg={2}>
@@ -153,139 +221,331 @@ const DashboardPage = ({ data }) => {
             title="Total Demand"
             value={formattedKPIs.totalDemand}
             icon={<TrendingUpIcon />}
-            color="#0288d1"
+            color={chartColors.info}
+            sx={{ 
+              height: '100%',
+              transition: 'transform 0.2s',
+              '&:hover': {
+                transform: 'translateY(-4px)',
+                boxShadow: theme.shadows[4]
+              }
+            }}
           />
         </Grid>
       </Grid>
       
-      {/* Main Dashboard Content */}
-      <Grid container spacing={3}>
-        {/* Demand Trends */}
-        <Grid item xs={12} lg={8}>
-          <Paper elevation={2} sx={{ p: 2, display: 'flex', flexDirection: 'column', height: 360 }}>
-            <Typography component="h2" variant="h6" color="primary" gutterBottom>
-            Historical Monthly Demand (2017-2018)
-            </Typography>
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart
-                data={demandData}
-                margin={{ top: 5, right: 30, left: 20, bottom: 5 }}
-              >
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis 
-                  dataKey="date" 
-                  tickFormatter={(date) => {
-                    if (date instanceof Date) {
-                      return date.toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
-                    }
-                    return '';
-                  }}
-                />
-                <YAxis />
-                <RechartsTooltip 
-                  formatter={(value) => new Intl.NumberFormat().format(value)}
-                  labelFormatter={(label) => {
-                    if (label instanceof Date) {
-                      return label.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
-                    }
-                    return label;
-                  }}
-                />
-                <Legend />
-                {(categories.topCategories || []).slice(0, 3).map((category, index) => (
-                  <Line 
-                    key={category}
-                    type="monotone" 
-                    dataKey="count"
-                    data={categories.categoryData?.[category] || []}
-                    name={category}
-                    stroke={['#8884d8', '#82ca9d', '#ffc658', '#ff8042', '#a4de6c'][index % 5]}
-                    activeDot={{ r: 8 }}
-                  />
-                ))}
-              </LineChart>
-            </ResponsiveContainer>
-          </Paper>
-        </Grid>
-        
-        {/* Top Categories */}
-        <Grid item xs={12} md={6} lg={4}>
-          <Paper elevation={2} sx={{ p: 2, display: 'flex', flexDirection: 'column', height: 360 }}>
-            <Typography component="h2" variant="h6" color="primary" gutterBottom>
-              Top Product Categories
-            </Typography>
-            <TopCategoriesChart 
-              categories={categories.topCategories} 
-              categoryData={categories.categoryData}
-              chartType="bar"
+{/* Main Dashboard Content */}
+<Box sx={{ mb: 2 }}>
+  <Typography variant="h5" component="h2" sx={{ 
+    mb: 2, 
+    fontWeight: 'medium',
+    borderLeft: `4px solid ${theme.palette.primary.main}`,
+    pl: 2
+  }}>
+    Demand & Performance Analytics
+  </Typography>
+</Box>
+
+<Grid container spacing={4}>
+  {/* First row: Historical Monthly Demand */}
+  <Grid item xs={12}>
+    <Paper elevation={3} sx={{ 
+      p: 4, 
+      display: 'flex', 
+      flexDirection: 'column', 
+      height: 450,
+      borderRadius: 2,
+      boxShadow: '0 4px 20px rgba(0,0,0,0.1)'
+    }}>
+      <Typography component="h2" variant="h6" gutterBottom sx={{ 
+        color: theme.palette.primary.main,
+        fontWeight: 'bold',
+        display: 'flex',
+        alignItems: 'center',
+        borderBottom: `1px solid ${theme.palette.divider}`,
+        pb: 1
+      }}>
+        <TrendingUpIcon sx={{ mr: 1 }} /> Historical Monthly Demand (2017-2018)
+      </Typography>
+      <ResponsiveContainer width="100%" height="100%">
+        <LineChart
+          data={demandData}
+          margin={{ top: 5, right: 30, left: 20, bottom: 5 }}
+        >
+          <CartesianGrid strokeDasharray="3 3" stroke={theme.palette.divider} />
+          <XAxis 
+            dataKey="date" 
+            tickFormatter={(date) => {
+              if (date instanceof Date) {
+                return date.toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
+              }
+              return '';
+            }}
+            stroke={theme.palette.text.secondary}
+          />
+          <YAxis stroke={theme.palette.text.secondary} />
+          <RechartsTooltip 
+            formatter={(value) => new Intl.NumberFormat().format(value)}
+            labelFormatter={(label) => {
+              if (label instanceof Date) {
+                return label.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+              }
+              return label;
+            }}
+            contentStyle={{ 
+              backgroundColor: theme.palette.background.paper,
+              borderColor: theme.palette.divider,
+              borderRadius: 8,
+              boxShadow: theme.shadows[3]
+            }}
+          />
+          <Legend 
+            verticalAlign="bottom" 
+            height={36} 
+            wrapperStyle={{ paddingTop: '10px' }}
+          />
+          {(categories.topCategories || []).slice(0, 3).map((category, index) => (
+            <Line 
+              key={category}
+              type="monotone" 
+              dataKey="count"
+              data={categories.categoryData?.[category] || []}
+              name={category}
+              stroke={chartColors.chart[index % chartColors.chart.length]}
+              strokeWidth={2}
+              dot={{ r: 4 }}
+              activeDot={{ r: 6, stroke: theme.palette.background.paper, strokeWidth: 2 }}
             />
-          </Paper>
-        </Grid>
-        
-        {/* Forecast Summary */}
-        <Grid item xs={12} md={6} lg={4}>
-          <Paper elevation={2} sx={{ p: 2, display: 'flex', flexDirection: 'column', height: 360 }}>
-            <Typography component="h2" variant="h6" color="primary" gutterBottom>
-              Forecast Performance
-            </Typography>
-            <Box sx={{ flexGrow: 1, overflow: 'auto' }}>
-              <List>
-                {(forecasts.performanceMetrics || []).slice(0, 5).map((forecast) => (
-                  <ListItem key={forecast?.category || 'unknown'} divider>
-                    <ListItemText 
-                      primary={forecast?.category || 'Unknown Category'} 
-                      secondary={`MAPE: ${forecast?.mape != null ? forecast.mape.toFixed(2) : 'N/A'}%, Growth: ${forecast?.growth_rate != null ? forecast.growth_rate.toFixed(2) : 'N/A'}%`} 
-                    />
-                    {forecast?.growth_rate != null ? (
-                      forecast.growth_rate > 0 ? (
-                        <TrendingUpIcon style={{ color: 'green' }} />
-                      ) : (
-                        <TrendingDownIcon style={{ color: 'red' }} />
-                      )
-                    ) : null}
-                  </ListItem>
-                ))}
-              </List>
-            </Box>
-          </Paper>
-        </Grid>
-        
-        {/* Seller Performance */}
-        <Grid item xs={12} md={6} lg={4}>
-          <Paper elevation={2} sx={{ p: 2, display: 'flex', flexDirection: 'column', height: 360 }}>
-            <Typography component="h2" variant="h6" color="primary" gutterBottom>
-              Seller Performance Clusters
-            </Typography>
-            <SellerPerformanceChart sellerData={sellerPerformance.clusters} />
-          </Paper>
-        </Grid>
-        
-        {/* Recommendations */}
-        <Grid item xs={12} md={6} lg={4}>
-          <Paper elevation={2} sx={{ p: 2, display: 'flex', flexDirection: 'column', height: 360 }}>
-            <Typography component="h2" variant="h6" color="primary" gutterBottom>
-              Inventory Recommendations
-            </Typography>
-            <Box sx={{ flexGrow: 1, overflow: 'auto' }}>
-              <List>
-                {(recommendations.inventory || []).slice(0, 5).map((rec, index) => (
-                  <ListItem key={index} divider>
-                    <ListItemText 
-                      primary={rec?.product_category || rec?.category || 'Unknown Category'} 
-                      secondary={
-                        rec?.recommendation || 
+          ))}
+        </LineChart>
+      </ResponsiveContainer>
+    </Paper>
+  </Grid>
+  
+  {/* Second row: Top Product Categories */}
+  <Grid item xs={12}>
+    <Paper elevation={3} sx={{ 
+      p: 4, 
+      display: 'flex', 
+      flexDirection: 'column', 
+      height: 450,
+      borderRadius: 2,
+      boxShadow: '0 4px 20px rgba(0,0,0,0.1)'
+    }}>
+      <Typography component="h2" variant="h6" gutterBottom sx={{ 
+        color: theme.palette.primary.main,
+        fontWeight: 'bold',
+        display: 'flex',
+        alignItems: 'center',
+        borderBottom: `1px solid ${theme.palette.divider}`,
+        pb: 1
+      }}>
+        <InventoryIcon sx={{ mr: 1 }} /> Top Product Categories
+      </Typography>
+      <TopCategoriesChart 
+        categories={categories.topCategories} 
+        categoryData={categories.categoryData}
+        chartType="bar"
+        chartColors={chartColors.chart}
+      />
+    </Paper>
+  </Grid>
+  
+  <Grid item xs={12} sx={{ mt: 2 }}>
+    <Divider />
+    <Box sx={{ my: 2 }}>
+      <Typography variant="h5" component="h2" sx={{ 
+        mb: 2,
+        fontWeight: 'medium',
+        borderLeft: `4px solid ${theme.palette.secondary.main}`,
+        pl: 2
+      }}>
+        Forecasts & Recommendations
+      </Typography>
+    </Box>
+  </Grid>
+  
+  {/* First row of Forecasts: Seller Performance Clusters (full width) */}
+  <Grid item xs={12}>
+    <Paper elevation={3} sx={{ 
+      p: 4, 
+      display: 'flex', 
+      flexDirection: 'column', 
+      height: 450,
+      borderRadius: 2,
+      boxShadow: '0 4px 20px rgba(0,0,0,0.1)'
+    }}>
+      <Typography component="h2" variant="h6" gutterBottom sx={{ 
+        color: theme.palette.secondary.main,
+        fontWeight: 'bold',
+        display: 'flex',
+        alignItems: 'center',
+        borderBottom: `1px solid ${theme.palette.divider}`,
+        pb: 1
+      }}>
+        <CheckCircleIcon sx={{ mr: 1 }} /> Seller Performance Clusters
+      </Typography>
+      <SellerPerformanceChart 
+        sellerData={sellerPerformance.clusters} 
+        chartColors={chartColors.chart}
+      />
+    </Paper>
+  </Grid>
+  
+  {/* Second row of Forecasts: Split into two columns */}
+  {/* Forecast Performance */}
+  <Grid item xs={12} md={6}>
+    <Paper elevation={3} sx={{ 
+      p: 4, 
+      display: 'flex', 
+      flexDirection: 'column', 
+      height: 450,
+      borderRadius: 2,
+      boxShadow: '0 4px 20px rgba(0,0,0,0.1)'
+    }}>
+      <Typography component="h2" variant="h6" gutterBottom sx={{ 
+        color: theme.palette.secondary.main,
+        fontWeight: 'bold',
+        display: 'flex',
+        alignItems: 'center',
+        borderBottom: `1px solid ${theme.palette.divider}`,
+        pb: 1
+      }}>
+        <TrendingUpIcon sx={{ mr: 1 }} /> Forecast Performance
+      </Typography>
+      <Box sx={{ flexGrow: 1, overflow: 'auto' }}>
+        <List sx={{ px: 1 }}>
+          {(forecasts.performanceMetrics || []).slice(0, 5).map((forecast, index) => (
+            <ListItem 
+              key={forecast?.category || `unknown-${index}`} 
+              divider={index < (forecasts.performanceMetrics || []).slice(0, 5).length - 1}
+              sx={{ 
+                borderRadius: 1,
+                mb: 1,
+                p: 2,
+                backgroundColor: index % 2 === 0 ? 'rgba(0,0,0,0.02)' : 'transparent'
+              }}
+            >
+              <ListItemText 
+                primary={
+                  <Typography variant="subtitle1" fontWeight="medium">
+                    {forecast?.category || 'Unknown Category'}
+                  </Typography>
+                } 
+                secondary={
+                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mt: 0.5 }}>
+                    <Typography variant="body2" component="span">
+                      MAPE: <b>{forecast?.mape != null ? forecast.mape.toFixed(2) : 'N/A'}%</b>
+                    </Typography>
+                    <Typography variant="body2" component="span">
+                      Growth: <b>{forecast?.growth_rate != null ? forecast.growth_rate.toFixed(2) : 'N/A'}%</b>
+                    </Typography>
+                  </Box>
+                } 
+              />
+              {forecast?.growth_rate != null && (
+                <Tooltip title={`${forecast.growth_rate > 0 ? 'Positive' : 'Negative'} growth trend`}>
+                  <Box>
+                    {forecast.growth_rate > 0 ? (
+                      <TrendingUpIcon style={{ color: theme.palette.success.main }} />
+                    ) : (
+                      <TrendingDownIcon style={{ color: theme.palette.error.main }} />
+                    )}
+                  </Box>
+                </Tooltip>
+              )}
+            </ListItem>
+          ))}
+        </List>
+      </Box>
+    </Paper>
+  </Grid>
+  
+  {/* Inventory Recommendations */}
+  <Grid item xs={12} md={6}>
+    <Paper elevation={3} sx={{ 
+      p: 4, 
+      display: 'flex', 
+      flexDirection: 'column', 
+      height: 450,
+      borderRadius: 2,
+      boxShadow: '0 4px 20px rgba(0,0,0,0.1)'
+    }}>
+      <Typography component="h2" variant="h6" gutterBottom sx={{ 
+        color: theme.palette.secondary.main,
+        fontWeight: 'bold',
+        display: 'flex',
+        alignItems: 'center',
+        borderBottom: `1px solid ${theme.palette.divider}`,
+        pb: 1
+      }}>
+        <InfoIcon sx={{ mr: 1 }} /> Inventory Recommendations
+      </Typography>
+      <Box sx={{ flexGrow: 1, overflow: 'auto' }}>
+        <List sx={{ px: 1 }}>
+          {(recommendations.inventory || []).slice(0, 8).map((rec, index) => (
+            <ListItem 
+              key={`rec-${index}`} 
+              divider={index < (recommendations.inventory || []).slice(0, 8).length - 1}
+              sx={{ 
+                borderRadius: 1,
+                mb: 1,
+                p: 2,
+                backgroundColor: index % 2 === 0 ? 'rgba(0,0,0,0.02)' : 'transparent'
+              }}
+            >
+              <ListItemText 
+                primary={
+                  <Typography variant="subtitle1" fontWeight="medium">
+                    {rec?.product_category || rec?.category || 'Unknown Category'}
+                  </Typography>
+                } 
+                secondary={
+                  <Box sx={{ mt: 0.5 }}>
+                    <Typography variant="body2" component="div">
+                      {rec?.recommendation || 
                         (rec?.reorder_point != null && rec?.safety_stock != null) ?
-                          `Reorder at ${rec.reorder_point.toFixed(0)} units, Safety stock: ${rec.safety_stock.toFixed(0)} units` :
-                          'No recommendation available'
-                      } 
-                    />
-                  </ListItem>
-                ))}
-              </List>
-            </Box>
-          </Paper>
-        </Grid>
-      </Grid>
+                        <>
+                          <Box component="span" sx={{ display: 'flex', alignItems: 'center', mb: 0.5 }}>
+                            <Box 
+                              component="span" 
+                              sx={{ 
+                                width: 8, 
+                                height: 8, 
+                                borderRadius: '50%', 
+                                bgcolor: theme.palette.warning.main,
+                                mr: 1
+                              }} 
+                            />
+                            Reorder at: <b style={{ marginLeft: 4 }}>{rec.reorder_point.toFixed(0)} units</b>
+                          </Box>
+                          <Box component="span" sx={{ display: 'flex', alignItems: 'center' }}>
+                            <Box 
+                              component="span" 
+                              sx={{ 
+                                width: 8, 
+                                height: 8, 
+                                borderRadius: '50%', 
+                                bgcolor: theme.palette.info.main,
+                                mr: 1
+                              }} 
+                            />
+                            Safety stock: <b style={{ marginLeft: 4 }}>{rec.safety_stock.toFixed(0)} units</b>
+                          </Box>
+                        </> :
+                        'No recommendation available'
+                    }
+                    </Typography>
+                  </Box>
+                } 
+              />
+            </ListItem>
+          ))}
+        </List>
+      </Box>
+    </Paper>
+  </Grid>
+</Grid>
     </Box>
   );
 };
