@@ -23,7 +23,8 @@ from data_preprocessing import (
     preprocess_order_data,
     preprocess_product_data,
     preprocess_order_items,
-    calculate_performance_metrics
+    calculate_performance_metrics,
+    calculate_delivery_days  
 )
 
 try:
@@ -32,66 +33,6 @@ try:
 except ImportError:
     MONGODB_AVAILABLE = False
     print("MongoDB integration not available. Install pymongo to enable MongoDB storage.")
-
-
-def calculate_delivery_days(orders, supply_chain=None):
-    print(f"🔍 Initial missing delivery timestamps: {orders['order_delivered_timestamp'].isna().sum()}")
-
-    if "delivery_days" not in orders.columns:
-        orders["delivery_days"] = np.nan
-
-    # Convert to datetime
-    for col in ["order_purchase_timestamp", "order_approved_at", "order_delivered_timestamp", "order_estimated_delivery_date"]:
-        if col in orders:
-            orders[col] = pd.to_datetime(orders[col], errors="coerce")
-
-    # Compute delivery_days from actual or estimated date
-    orders["delivery_days"] = (
-        (orders["order_delivered_timestamp"].fillna(orders["order_estimated_delivery_date"])
-         - orders["order_purchase_timestamp"])
-        .dt.days.clip(lower=1)
-    )
-
-    # Impute missing delivery days by product category median if supply_chain is available
-    if supply_chain is not None and "product_category_name" in supply_chain.columns:
-        category_medians = supply_chain.dropna(subset=["delivery_days"]) \
-                                       .groupby("product_category_name")["delivery_days"] \
-                                       .median()
-
-        # Ensure `product_category_name` is present before mapping
-        if "product_category_name" in orders.columns:
-            orders.loc[orders["delivery_days"].isna(), "delivery_days"] = \
-                orders.loc[orders["delivery_days"].isna(), "product_category_name"].map(category_medians)
-
-    # Impute missing delivery days by customer state median if supply_chain is available
-    if supply_chain is not None and "customer_state" in supply_chain.columns:
-        state_medians = supply_chain.dropna(subset=["delivery_days"]) \
-                                    .groupby("customer_state")["delivery_days"] \
-                                    .median()
-
-        # Ensure `customer_state` is present before mapping
-        if "customer_state" in orders.columns:
-            orders.loc[orders["delivery_days"].isna(), "delivery_days"] = \
-                orders.loc[orders["delivery_days"].isna(), "customer_state"].map(state_medians)
-
-    # Fallback to global median if still missing
-    global_median = orders["delivery_days"].median()
-    orders["delivery_days"] = orders["delivery_days"].fillna(global_median).clip(1, 30)
-
-    print(f"🔍 Missing delivery days after imputation: {orders['delivery_days'].isna().sum()}")
-
-    # Backfill order_delivered_timestamp using calculated delivery days
-    mask = orders["order_delivered_timestamp"].isna() & orders["order_purchase_timestamp"].notna()
-    orders.loc[mask, "order_delivered_timestamp"] = (
-        orders.loc[mask, "order_purchase_timestamp"] +
-        pd.to_timedelta(orders.loc[mask, "delivery_days"], unit="D")
-    )
-
-    print(f"✅ Missing delivery timestamps after processing: {orders['order_delivered_timestamp'].isna().sum()}")
-
-    return orders
-
-
 
 
 def parse_arguments():
@@ -133,7 +74,6 @@ def run_pandas_analysis(args):
     customers = pd.read_csv(os.path.join(args.data_dir, 'df_Customers.csv'))
     order_items = pd.read_csv(os.path.join(args.data_dir, 'df_OrderItems.csv'))
     orders = pd.read_csv(os.path.join(args.data_dir, 'df_Orders.csv'))
-    payments = pd.read_csv(os.path.join(args.data_dir, 'df_Payments.csv'))
     products = pd.read_csv(os.path.join(args.data_dir, 'df_Products.csv'))
     
     ensure_directory(args.output_dir)
