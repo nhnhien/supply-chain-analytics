@@ -1,77 +1,40 @@
 import pandas as pd
 import numpy as np
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from sklearn.impute import KNNImputer
 import matplotlib.pyplot as plt
 
 def detect_and_handle_anomalies(df, column, window_size=5, z_threshold=3.0):
     """
-    Detect and handle anomalies in time series data using rolling Z-score method
-    
-    Args:
-        df: DataFrame containing time series data
-        column: Column name to check for anomalies
-        window_size: Window size for rolling statistics
-        z_threshold: Z-score threshold for anomaly detection
-        
-    Returns:
-        DataFrame with anomalies handled
+    Detect and handle anomalies in a time series column using rolling statistics.
     """
-    # Create a copy to avoid modifying the original DataFrame
     result = df.copy()
-    
-    # Calculate rolling mean and standard deviation
     rolling_mean = df[column].rolling(window=window_size, center=True).mean()
     rolling_std = df[column].rolling(window=window_size, center=True).std()
-    
-    # Replace NaN values in rolling stats
     rolling_mean = rolling_mean.fillna(df[column].mean())
     rolling_std = rolling_std.fillna(df[column].std())
-    
-    # Make sure std is not zero to avoid division by zero
     rolling_std = rolling_std.replace(0, df[column].std())
     if rolling_std.iloc[0] == 0:
         rolling_std = rolling_std.replace(0, 1)
-    
-    # Calculate z-scores
     z_scores = (df[column] - rolling_mean) / rolling_std
-    
-    # Identify anomalies
     anomalies = (z_scores.abs() > z_threshold)
     anomaly_indices = df.index[anomalies]
-    
     if len(anomaly_indices) > 0:
         print(f"Detected {len(anomaly_indices)} anomalies in {column}")
-        
-        # Replace anomalies with the median of neighboring non-anomalous values
         for idx in anomaly_indices:
-            # Define window around the anomaly
             left_bound = max(0, df.index.get_loc(idx) - window_size)
             right_bound = min(len(df), df.index.get_loc(idx) + window_size + 1)
             window = df.iloc[left_bound:right_bound]
-            
-            # Get non-anomalous values from the window
             non_anomalous = window[~anomalies.iloc[left_bound:right_bound]]
-            
             if len(non_anomalous) > 0:
-                # Replace with median of non-anomalous values
                 result.loc[idx, column] = non_anomalous[column].median()
             else:
-                # If all window values are anomalous, use global median
                 result.loc[idx, column] = df[column].median()
-    
     return result
-
 def infer_date_format(date_str):
     """
-    Infer date format from a string by trying common formats
-    
-    Args:
-        date_str: Date string to infer format from
-        
-    Returns:
-        Inferred format string or None if no format can be inferred
+    Infer the format of a date string by trying common formats.
     """
     formats = [
         '%Y-%m-%d', '%Y/%m/%d', '%d-%m-%Y', '%d/%m/%Y',
@@ -80,75 +43,43 @@ def infer_date_format(date_str):
         '%m-%d-%Y %H:%M:%S', '%m/%d/%Y %H:%M:%S', '%Y-%m-%dT%H:%M:%S',
         '%Y-%m-%d %H:%M:%S.%f'
     ]
-    
     for fmt in formats:
         try:
             datetime.strptime(date_str, fmt)
             return fmt
         except ValueError:
             continue
-    
     return None
 
 def smart_date_conversion(date_column):
     """
-    Convert a date column to datetime with automatic format detection
-    
-    Args:
-        date_column: Series containing date strings
-        
-    Returns:
-        Series with converted datetime values
+    Convert a date column to datetime using an inferred format and enforce UTC.
     """
-    # Filter out NaN values for format detection
     valid_dates = date_column.dropna()
-    
     if len(valid_dates) == 0:
-        return pd.Series([None] * len(date_column))
+        return pd.Series([pd.NaT] * len(date_column))
     
-    # Try to infer format from the first valid date
     sample_date = valid_dates.iloc[0]
     inferred_format = infer_date_format(str(sample_date))
-    
     if inferred_format:
         try:
-            return pd.to_datetime(date_column, format=inferred_format, errors='coerce')
-        except:
-            # Fall back to pandas default parsing
-            return pd.to_datetime(date_column, errors='coerce')
+            return pd.to_datetime(date_column, format=inferred_format, errors='coerce', utc=True)
+        except Exception as e:
+            print(f"Error with inferred format: {e}. Falling back to default parsing.")
+            return pd.to_datetime(date_column, errors='coerce', utc=True)
     else:
-        # Let pandas try to infer the format
-        return pd.to_datetime(date_column, errors='coerce')
+        return pd.to_datetime(date_column, errors='coerce', utc=True)
+
 
 def fill_missing_dates(df, date_column='date', freq='MS', fill_method='linear'):
     """
-    Fill in missing dates in time series data
-    
-    Args:
-        df: DataFrame containing time series data
-        date_column: Name of date column
-        freq: Frequency of time series ('MS' for month start, 'D' for daily, etc.)
-        fill_method: Method for filling in missing values ('linear', 'ffill', 'bfill', 'mean')
-        
-    Returns:
-        DataFrame with missing dates filled in
+    Create a complete date range in UTC, reindex the DataFrame, and fill missing values.
     """
-    # Make sure the date column is a datetime
-    df[date_column] = pd.to_datetime(df[date_column])
-    
-    # Sort by date
+    df[date_column] = pd.to_datetime(df[date_column], errors='coerce', utc=True)
     df = df.sort_values(date_column)
-    
-    # Set date as index
     df_indexed = df.set_index(date_column)
-    
-    # Create a complete date range
-    date_range = pd.date_range(start=df_indexed.index.min(), end=df_indexed.index.max(), freq=freq)
-    
-    # Reindex the DataFrame to include all dates
+    date_range = pd.date_range(start=df_indexed.index.min(), end=df_indexed.index.max(), freq=freq, tz='UTC')
     df_filled = df_indexed.reindex(date_range)
-    
-    # Fill in missing values
     if fill_method == 'linear':
         df_filled = df_filled.interpolate(method='linear')
     elif fill_method == 'ffill':
@@ -157,11 +88,7 @@ def fill_missing_dates(df, date_column='date', freq='MS', fill_method='linear'):
         df_filled = df_filled.bfill()
     elif fill_method == 'mean':
         df_filled = df_filled.fillna(df_filled.mean())
-    
-    # Reset index to convert date back to a column
-    df_filled = df_filled.reset_index()
-    df_filled = df_filled.rename(columns={'index': date_column})
-    
+    df_filled = df_filled.reset_index().rename(columns={'index': date_column})
     return df_filled
 
 def apply_seasonal_adjustment(df, column, period=12, multiplicative=False):
@@ -258,20 +185,11 @@ def calculate_delivery_days(orders, supply_chain=None):
 
 def preprocess_order_data(orders_df, output_dir=None, apply_seasonal=True):
     """
-    Preprocess order data to handle missing values and calculate delivery metrics
-    with improved handling of missing timestamp columns and data quality.
-    
-    Args:
-        orders_df: DataFrame containing order data
-        output_dir: Directory to save processed data (optional)
-        apply_seasonal: Whether to apply seasonal adjustment to orders
-        
-    Returns:
-        Processed DataFrame with enhanced data quality
+    Preprocess order data by converting timestamps to UTC, creating synthetic timestamps if needed,
+    and calculating derived columns such as processing_time and on_time_delivery.
     """
     print("Preprocessing order data...")
     
-    # Define required timestamp columns
     timestamp_columns = [
         'order_purchase_timestamp', 
         'order_approved_at', 
@@ -279,47 +197,39 @@ def preprocess_order_data(orders_df, output_dir=None, apply_seasonal=True):
         'order_estimated_delivery_date'
     ]
     
-    # Identify missing timestamp columns
     missing_columns = [col for col in timestamp_columns if col not in orders_df.columns]
-    
     if missing_columns:
         print(f"Note: Missing timestamp columns: {', '.join(missing_columns)}")
         print("Creating synthetic timestamps based on available data...")
-        
-        # Create synthetic order_purchase_timestamp if missing
         if 'order_purchase_timestamp' not in orders_df.columns:
             if 'order_year' in orders_df.columns and 'order_month' in orders_df.columns:
                 orders_df['order_purchase_timestamp'] = pd.to_datetime(
                     orders_df['order_year'].astype(str) + '-' + 
-                    orders_df['order_month'].astype(str).str.zfill(2) + '-15'  # Middle of month
+                    orders_df['order_month'].astype(str).str.zfill(2) + '-15', utc=True
                 )
                 print("Created synthetic order_purchase_timestamp from order_year and order_month")
             else:
-                # Use the current date as fallback minus 1 year
-                default_start = (datetime.now().replace(year=datetime.now().year-1)).strftime("%Y-%m-%d")
+                default_start = (datetime.now(timezone.utc).replace(year=datetime.now(timezone.utc).year-1)).strftime("%Y-%m-%d")
                 orders_df['order_purchase_timestamp'] = pd.date_range(
-                    start=default_start, periods=len(orders_df), freq='D'
+                    start=default_start, periods=len(orders_df), freq='D', tz='UTC'
                 )
                 print(f"Warning: Created default order_purchase_timestamp starting from {default_start}")
     
-    # Convert existing timestamps to datetime with smart format detection
+    # Convert timestamps to UTC
     for col in timestamp_columns:
         if col in orders_df.columns:
-            if orders_df[col].dtype == 'object':  # String dates
+            if orders_df[col].dtype == 'object':
                 orders_df[col] = smart_date_conversion(orders_df[col])
             else:
-                orders_df[col] = pd.to_datetime(orders_df[col], errors='coerce')
+                orders_df[col] = pd.to_datetime(orders_df[col], errors='coerce', utc=True)
     
-    # Create synthetic timestamps for missing columns using business logic
+    # Create synthetic timestamps if missing
     if 'order_approved_at' not in orders_df.columns and 'order_purchase_timestamp' in orders_df.columns:
-        # Approval is ~1 day after purchase plus random hours
         orders_df['order_approved_at'] = orders_df['order_purchase_timestamp'] + pd.Timedelta(days=1)
-        # Add some randomness to approval times
         random_hours = np.random.randint(0, 24, size=len(orders_df))
         orders_df['order_approved_at'] += pd.Series([pd.Timedelta(hours=h) for h in random_hours])
         print("Created synthetic order_approved_at based on purchase timestamp")
     
-    # For missing order_delivered_timestamp: delivery takes 3-7 days after approval or 4-8 days after purchase
     if 'order_delivered_timestamp' not in orders_df.columns:
         if 'order_approved_at' in orders_df.columns:
             delivery_days = np.random.randint(3, 8, size=len(orders_df))
@@ -334,7 +244,6 @@ def preprocess_order_data(orders_df, output_dir=None, apply_seasonal=True):
             )
             print("Created synthetic order_delivered_timestamp based on purchase timestamp")
     
-    # For missing order_estimated_delivery_date: estimated delivery is 5-10 days after purchase
     if 'order_estimated_delivery_date' not in orders_df.columns and 'order_purchase_timestamp' in orders_df.columns:
         est_days = np.random.randint(5, 11, size=len(orders_df))
         orders_df['order_estimated_delivery_date'] = orders_df['order_purchase_timestamp'] + pd.Series(
@@ -344,9 +253,7 @@ def preprocess_order_data(orders_df, output_dir=None, apply_seasonal=True):
     
     # Calculate processing time (in days) from purchase to approval
     if 'order_purchase_timestamp' in orders_df.columns and 'order_approved_at' in orders_df.columns:
-        orders_df['processing_time'] = (
-            orders_df['order_approved_at'] - orders_df['order_purchase_timestamp']
-        ).dt.total_seconds() / (24 * 3600)
+        orders_df['processing_time'] = (orders_df['order_approved_at'] - orders_df['order_purchase_timestamp']).dt.total_seconds() / (24 * 3600)
         orders_df.loc[orders_df['processing_time'] < 0, 'processing_time'] = np.nan
     else:
         orders_df['processing_time'] = np.nan
@@ -354,9 +261,7 @@ def preprocess_order_data(orders_df, output_dir=None, apply_seasonal=True):
     
     # Calculate actual delivery days
     if 'order_purchase_timestamp' in orders_df.columns and 'order_delivered_timestamp' in orders_df.columns:
-        orders_df['actual_delivery_days'] = (
-            orders_df['order_delivered_timestamp'] - orders_df['order_purchase_timestamp']
-        ).dt.total_seconds() / (24 * 3600)
+        orders_df['actual_delivery_days'] = (orders_df['order_delivered_timestamp'] - orders_df['order_purchase_timestamp']).dt.total_seconds() / (24 * 3600)
         orders_df.loc[orders_df['actual_delivery_days'] < 0, 'actual_delivery_days'] = np.nan
     else:
         orders_df['actual_delivery_days'] = np.nan
@@ -364,122 +269,36 @@ def preprocess_order_data(orders_df, output_dir=None, apply_seasonal=True):
     
     # Calculate estimated delivery days
     if 'order_purchase_timestamp' in orders_df.columns and 'order_estimated_delivery_date' in orders_df.columns:
-        orders_df['estimated_delivery_days'] = (
-            orders_df['order_estimated_delivery_date'] - orders_df['order_purchase_timestamp']
-        ).dt.total_seconds() / (24 * 3600)
+        orders_df['estimated_delivery_days'] = (orders_df['order_estimated_delivery_date'] - orders_df['order_purchase_timestamp']).dt.total_seconds() / (24 * 3600)
         orders_df.loc[orders_df['estimated_delivery_days'] < 0, 'estimated_delivery_days'] = np.nan
     else:
         orders_df['estimated_delivery_days'] = np.nan
         print("Warning: Missing timestamp columns for estimated delivery time calculation")
     
-    # Detect and handle anomalies in processing and delivery times
-    if 'processing_time' in orders_df.columns:
-        orders_df = detect_and_handle_anomalies(orders_df, 'processing_time')
-    
-    if 'actual_delivery_days' in orders_df.columns:
-        orders_df = detect_and_handle_anomalies(orders_df, 'actual_delivery_days')
-    
-    # Determine on-time delivery: delivered on or before estimated date
+    # Determine on-time delivery: delivered on or before the estimated date.
     if 'actual_delivery_days' in orders_df.columns and 'estimated_delivery_days' in orders_df.columns:
         mask = (~orders_df['actual_delivery_days'].isna() & ~orders_df['estimated_delivery_days'].isna())
-        orders_df.loc[mask, 'on_time_delivery'] = (
-            orders_df.loc[mask, 'actual_delivery_days'] <= orders_df.loc[mask, 'estimated_delivery_days']
-        ).astype(int)
+        orders_df.loc[mask, 'on_time_delivery'] = (orders_df.loc[mask, 'actual_delivery_days'] <= orders_df.loc[mask, 'estimated_delivery_days']).astype(int)
+        # For rows with missing values, fill with a synthetic flag using a pandas Series with the same index.
+        random_series = pd.Series((np.random.random(len(orders_df)) <= 0.85).astype(int), index=orders_df.index)
+        orders_df['on_time_delivery'] = orders_df['on_time_delivery'].fillna(random_series)
     else:
-        # Use a synthetic on-time delivery flag with a realistic distribution
-        on_time_ratio = 0.85  # 85% on-time rate is typical for e-commerce
-        random_vals = np.random.random(len(orders_df))
-        orders_df['on_time_delivery'] = (random_vals <= on_time_ratio).astype(int)
+        orders_df['on_time_delivery'] = pd.Series((np.random.random(len(orders_df)) <= 0.85).astype(int), index=orders_df.index)
         print("Created synthetic on_time_delivery with 85% on-time rate")
     
-    # Fill missing processing times with median by product category if available
-    if 'processing_time' in orders_df.columns and 'product_category_name' in orders_df.columns:
-        category_medians = orders_df.groupby('product_category_name')['processing_time'].median()
-        for category, median in category_medians.items():
-            mask = (orders_df['product_category_name'] == category) & (orders_df['processing_time'].isna())
-            orders_df.loc[mask, 'processing_time'] = median
-    
-    # Fill any remaining missing processing times with overall median
-    if 'processing_time' in orders_df.columns:
-        median_pt = orders_df['processing_time'].median()
-        orders_df['processing_time'] = orders_df['processing_time'].fillna(median_pt if pd.notna(median_pt) else 1.0)
-    
-    # Use actual delivery days as primary delivery_days; fallback to estimated
-    if 'actual_delivery_days' in orders_df.columns:
-        orders_df['delivery_days'] = orders_df['actual_delivery_days']
-    
-    if 'estimated_delivery_days' in orders_df.columns:
-        mask = orders_df['delivery_days'].isna()
-        orders_df.loc[mask, 'delivery_days'] = orders_df.loc[mask, 'estimated_delivery_days']
-    
-    # Fill any remaining NaN values in delivery_days
-    median_delivery = orders_df['delivery_days'].median() if 'delivery_days' in orders_df.columns else None
-    if pd.isna(median_delivery):
-        median_delivery = 7.0  # Reasonable default
-    
-    if 'delivery_days' not in orders_df.columns:
-        orders_df['delivery_days'] = median_delivery
-    else:
-        orders_df['delivery_days'] = orders_df['delivery_days'].fillna(median_delivery)
-    
-    # Winsorize extreme delivery days (cap at reasonable values)
-    q99 = orders_df['delivery_days'].quantile(0.99)
-    orders_df['delivery_days'] = orders_df['delivery_days'].clip(upper=min(q99, 30))
-    
-    # Extract year and month from order_purchase_timestamp if available
+    # Extract year and month from order_purchase_timestamp for aggregation purposes
     if 'order_purchase_timestamp' in orders_df.columns:
         orders_df['order_year'] = orders_df['order_purchase_timestamp'].dt.year
         orders_df['order_month'] = orders_df['order_purchase_timestamp'].dt.month
-    elif 'order_year' not in orders_df.columns or 'order_month' not in orders_df.columns:
-        current_year = datetime.now().year
-        orders_df['order_year'] = current_year - 1  # Default to previous year
+    else:
+        current_year = datetime.now(timezone.utc).year
+        orders_df['order_year'] = current_year - 1
         orders_df['order_month'] = np.random.randint(1, 13, size=len(orders_df))
         print("Warning: Created default order_year and order_month values")
     
-    # Calculate monthly order counts for seasonality analysis
-    if 'order_year' in orders_df.columns and 'order_month' in orders_df.columns:
-        monthly_counts = orders_df.groupby(['order_year', 'order_month']).size().reset_index(name='count')
-        monthly_counts['date'] = pd.to_datetime(
-            monthly_counts['order_year'].astype(str) + '-' + 
-            monthly_counts['order_month'].astype(str).str.zfill(2) + '-01'
-        )
-        monthly_counts = monthly_counts.sort_values('date')
-        
-        # Apply seasonal adjustment if enough data is available and requested
-        if len(monthly_counts) >= 24 and apply_seasonal:  # Need at least 2 years of data
-            try:
-                monthly_counts_adjusted, seasonal_factors = apply_seasonal_adjustment(
-                    monthly_counts, 'count', period=12
-                )
-                if seasonal_factors is not None:
-                    seasonal_factors_path = os.path.join(output_dir, 'seasonal_factors.csv') if output_dir else None
-                    if seasonal_factors_path:
-                        seasonal_factors.to_csv(seasonal_factors_path)
-                        print(f"Saved seasonal factors to {seasonal_factors_path}")
-            except Exception as e:
-                print(f"Warning: Could not apply seasonal adjustment: {e}")
-    
-    # Calculate delivery performance metrics
-    delivery_metrics = {
-        'on_time_delivery_rate': orders_df['on_time_delivery'].mean() * 100 if 'on_time_delivery' in orders_df.columns else 85.0,
-        'avg_delivery_days': orders_df['delivery_days'].mean(),
-        'avg_processing_time': orders_df['processing_time'].mean() if 'processing_time' in orders_df.columns else 1.0,
-        'delivery_days_std': orders_df['delivery_days'].std(),
-        'processing_time_std': orders_df['processing_time'].std() if 'processing_time' in orders_df.columns else 0.3
-    }
-    
-    # Add flags for data quality
-    delivery_metrics['has_actual_delivery_data'] = 'order_delivered_timestamp' in orders_df.columns
-    delivery_metrics['has_actual_processing_data'] = 'order_approved_at' in orders_df.columns
-    
-    # Save processed data if output directory is provided
-    if output_dir:
-        os.makedirs(output_dir, exist_ok=True)
-        pd.DataFrame([delivery_metrics]).to_csv(os.path.join(output_dir, 'delivery_performance.csv'), index=False)
-        orders_df.to_csv(os.path.join(output_dir, 'processed_orders.csv'), index=False)
-    
     print("Order data preprocessing complete")
-    return orders_df, delivery_metrics
+    return orders_df, {}
+
 
 def preprocess_product_data(products_df, output_dir=None):
     """

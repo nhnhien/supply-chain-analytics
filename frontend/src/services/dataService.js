@@ -67,14 +67,18 @@ export async function loadCsvData(filePath, mockDataGenerator) {
                   for (const field of numericFields) {
                     if (field in row && row[field] !== null) {
                       const parsed = parseFloat(row[field]);
-                      // Default to 0 if parsed value is NaN or not finite (handles Infinity cases)
                       row[field] = (!isNaN(parsed) && isFinite(parsed)) ? parsed : 0;
                     }
                   }
-                  // Parse date field with error handling
+                  // Parse date field with error handling and UTC standardization
                   if (row.date && typeof row.date === 'string') {
                     try {
-                      const parsedDate = new Date(row.date);
+                      let dateString = row.date;
+                      // If no timezone info is present, assume UTC by appending 'Z'
+                      if (!/([Zz]|[+-]\d{2}:\d{2})$/.test(dateString)) {
+                        dateString += "Z";
+                      }
+                      const parsedDate = new Date(dateString);
                       if (isNaN(parsedDate.getTime())) {
                         console.warn(`Invalid date string encountered: ${row.date}. Setting date to null.`);
                         row.date = null;
@@ -86,14 +90,12 @@ export async function loadCsvData(filePath, mockDataGenerator) {
                       row.date = null;
                     }
                   }
-                  // Fallback: construct date from year/month if needed
+                  // Fallback: construct date from year/month if needed (assume first day of month in UTC)
                   if (!row.date && (row.order_year || row.year) && (row.order_month || row.month)) {
                     try {
-                      row.date = new Date(
-                        parseInt(row.order_year || row.year),
-                        parseInt(row.order_month || row.month) - 1,
-                        1
-                      );
+                      const year = parseInt(row.order_year || row.year);
+                      const month = parseInt(row.order_month || row.month) - 1;
+                      row.date = new Date(Date.UTC(year, month, 1));
                     } catch (err) {
                       console.warn(`Error constructing date from year/month for row: ${JSON.stringify(row)}. Setting date to null.`);
                       row.date = null;
@@ -102,7 +104,7 @@ export async function loadCsvData(filePath, mockDataGenerator) {
                   return row;
                 } catch (err) {
                   console.error("Error processing row:", row, err);
-                  return null; // Skip malformed row
+                  return null;
                 }
               })
               .filter(row => row !== null);
