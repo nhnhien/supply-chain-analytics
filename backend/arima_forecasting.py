@@ -16,6 +16,7 @@ from statsmodels.tsa.arima.model import ARIMA
 from statsmodels.tsa.stattools import adfuller
 from statsmodels.tsa.seasonal import seasonal_decompose
 from statsmodels.graphics.tsaplots import plot_acf, plot_pacf
+import logging
 import warnings
 warnings.filterwarnings("ignore")
 
@@ -31,88 +32,164 @@ try:
     TENSORFLOW_AVAILABLE = True
 except ImportError:
     TENSORFLOW_AVAILABLE = False
+
+# Set up logging
+def setup_forecast_logger():
+    """
+    Set up a logger for the ARIMA forecasting module
     
+    Returns:
+        A configured logger
+    """
+    logger = logging.getLogger('supply_chain_analytics.arima_forecasting')
+    
+    # If no handlers have been configured, add a default handler
+    if not logger.handlers:
+        handler = logging.StreamHandler()
+        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        handler.setFormatter(formatter)
+        logger.addHandler(handler)
+        logger.setLevel(logging.INFO)
+    
+    return logger
+
+def handle_forecasting_error(method_name, error, category=None, default_return=None, log_level='error'):
+    """
+    Centralized error handling function for forecasting operations.
+    
+    Args:
+        method_name: Name of the method where the error occurred
+        error: The exception that was raised
+        category: Optional category name for context (e.g., product category)
+        default_return: Value to return when an error occurs
+        log_level: Logging level to use ('error', 'warning', or 'info')
+        
+    Returns:
+        The default_return value
+    """
+    logger = setup_forecast_logger()
+    
+    category_info = f" for category '{category}'" if category else ""
+    message = f"Error in {method_name}{category_info}: {str(error)}"
+    
+    if log_level.lower() == 'error':
+        logger.error(message)
+    elif log_level.lower() == 'warning':
+        logger.warning(message)
+    else:
+        logger.info(message)
+        
+    return default_return
+
+# Initialize logger
+logger = setup_forecast_logger()
 
 class DemandForecaster:
     """
     Enhanced class for demand forecasting using ARIMA models with robust fallbacks.
     """
     def __init__(self, data_path="demand_by_category.csv"):
-        self.data = pd.read_csv(data_path)
-        self.categories = self.data['product_category_name'].unique()
-        self.models = {}
-        self.forecasts = {}
-        self.performance = {}
-        self.best_params = {}
-        self.growth_rates = {}
-        self.count_column = None
-        self.use_auto_arima = False  # Set to True for auto ARIMA parameter selection
-        self.seasonal = False        # Set to True to include seasonality
-        self.seasonal_period = 12    # Default seasonal period (monthly data)
+        # Initialize logger at class creation
+        self.logger = setup_forecast_logger()
+        self.logger.info(f"Initializing DemandForecaster with data from {data_path}")
         
+        # Handle file not found or other initialization errors
+        try:
+            self.data = pd.read_csv(data_path)
+            self.categories = self.data['product_category_name'].unique()
+            self.models = {}
+            self.forecasts = {}
+            self.performance = {}
+            self.best_params = {}
+            self.growth_rates = {}
+            self.count_column = None
+            self.use_auto_arima = False  # Set to True for auto ARIMA parameter selection
+            self.seasonal = False        # Set to True to include seasonality
+            self.seasonal_period = 12    # Default seasonal period (monthly data)
+            self.category_data = {}      # Will be populated in preprocess_forecast_data
+        except Exception as e:
+            self.logger.error(f"Failed to initialize DemandForecaster: {e}")
+            # Set up minimal defaults to prevent errors in other methods
+            self.data = pd.DataFrame()
+            self.categories = np.array([])
+            self.models = {}
+            self.forecasts = {}
+            self.performance = {}
+            self.best_params = {}
+            self.growth_rates = {}
+            self.count_column = None
+            self.use_auto_arima = False
+            self.seasonal = False
+            self.seasonal_period = 12
+            self.category_data = {}
+
+
     def _remove_outliers(self, ts):
         """
         Enhanced outlier detection and removal using IQR and z-score methods
         """
-        if len(ts) < 4:
-            return ts
+        try:
+            if len(ts) < 4:
+                return ts
+                
+            ts_cleaned = ts.copy()
             
-        ts_cleaned = ts.copy()
-        
-        # Method 1: IQR method
-        q1 = ts.quantile(0.25)
-        q3 = ts.quantile(0.75)
-        iqr = q3 - q1
-        
-        # Define bounds
-        lower_bound = q1 - 2.0 * iqr
-        upper_bound = q3 + 2.0 * iqr
-        
-        # Method 2: Z-score method (more robust for normal-like distributions)
-        mean = ts.mean()
-        std = ts.std()
-        z_lower = mean - 3 * std
-        z_upper = mean + 3 * std
-        
-        # Combined approach - use the less aggressive bound
-        final_lower = max(lower_bound, z_lower)
-        final_upper = min(upper_bound, z_upper)
-        
-        # Identify outliers
-        outliers_idx = (ts < final_lower) | (ts > final_upper)
-        
-        if outliers_idx.sum() > 0:
-            print(f"Detected {outliers_idx.sum()} outliers out of {len(ts)} points")
+            # Method 1: IQR method
+            q1 = ts.quantile(0.25)
+            q3 = ts.quantile(0.75)
+            iqr = q3 - q1
             
-            # Replace outliers with median of nearby values (5-point window)
-            for idx in outliers_idx[outliers_idx].index:
-                i = ts.index.get_loc(idx)
+            # Define bounds
+            lower_bound = q1 - 2.0 * iqr
+            upper_bound = q3 + 2.0 * iqr
+            
+            # Method 2: Z-score method (more robust for normal-like distributions)
+            mean = ts.mean()
+            std = ts.std()
+            z_lower = mean - 3 * std
+            z_upper = mean + 3 * std
+            
+            # Combined approach - use the less aggressive bound
+            final_lower = max(lower_bound, z_lower)
+            final_upper = min(upper_bound, z_upper)
+            
+            # Identify outliers
+            outliers_idx = (ts < final_lower) | (ts > final_upper)
+            
+            if outliers_idx.sum() > 0:
+                logger.info(f"Detected {outliers_idx.sum()} outliers out of {len(ts)} points")
                 
-                # Get window around the outlier (respecting boundaries)
-                start = max(0, i - 2)
-                end = min(len(ts), i + 3)
-                window = ts.iloc[start:end]
-                
-                # Remove outliers from the window itself
-                window = window[(window >= final_lower) & (window <= final_upper)]
-                
-                if len(window) > 0:
-                    # Replace with median of non-outlier values in window
-                    ts_cleaned.loc[idx] = window.median()
-                else:
-                    # If all values in window are outliers, use global median
-                    ts_cleaned.loc[idx] = ts[(ts >= final_lower) & (ts <= final_upper)].median()
-        
-        return ts_cleaned
+                # Replace outliers with median of nearby values (5-point window)
+                for idx in outliers_idx[outliers_idx].index:
+                    i = ts.index.get_loc(idx)
+                    
+                    # Get window around the outlier (respecting boundaries)
+                    start = max(0, i - 2)
+                    end = min(len(ts), i + 3)
+                    window = ts.iloc[start:end]
+                    
+                    # Remove outliers from the window itself
+                    window = window[(window >= final_lower) & (window <= final_upper)]
+                    
+                    if len(window) > 0:
+                        # Replace with median of non-outlier values in window
+                        ts_cleaned.loc[idx] = window.median()
+                    else:
+                        # If all values in window are outliers, use global median
+                        ts_cleaned.loc[idx] = ts[(ts >= final_lower) & (ts <= final_upper)].median()
+            
+            return ts_cleaned
+        except Exception as e:
+            return handle_forecasting_error("_remove_outliers", e, default_return=ts)
 
     def _detect_seasonality(self, ts):
         """
         Enhanced seasonality detection with confidence scoring
         """
-        if len(ts) < 24:  # Need at least 2 years of data for reliable seasonality detection
-            return False, self.seasonal_period, 0.0
-            
         try:
+            if len(ts) < 24:  # Need at least 2 years of data for reliable seasonality detection
+                return False, self.seasonal_period, 0.0
+                
             # Calculate autocorrelation at different lags
             acf_values = pd.Series([pd.Series(ts).autocorr(lag=i) for i in range(1, min(37, len(ts) // 2))])
             
@@ -185,38 +262,38 @@ class DemandForecaster:
             return self.seasonal, self.seasonal_period, 0.0
             
         except Exception as e:
-            print(f"Error detecting seasonality: {e}")
-            return self.seasonal, self.seasonal_period, 0.0
-            
+            return handle_forecasting_error("_detect_seasonality", e, 
+                                        default_return=(self.seasonal, self.seasonal_period, 0.0))
+
     def _lstm_forecast(self, ts, periods=6):
         """
         Implement LSTM forecasting as an alternative to ARIMA
         """
-        if not TENSORFLOW_AVAILABLE:
-            # Fallback to simple moving average if TensorFlow not available
-            print("TensorFlow not available, using moving average fallback")
-            last_value = ts.iloc[-1]
-            weights = np.array([0.7, 0.2, 0.1])
-            if len(ts) >= 3:
-                ma = np.convolve(ts[-3:], weights)[:1][0]
-                # Simple trend extrapolation
-                if len(ts) >= 6:
-                    first_3_avg = ts[-6:-3].mean()
-                    last_3_avg = ts[-3:].mean()
-                    if first_3_avg > 0:
-                        trend = (last_3_avg / first_3_avg) - 1
-                        trend = max(min(trend, 0.5), -0.3)  # Bound trend
+        try:
+            if not TENSORFLOW_AVAILABLE:
+                # Fallback to simple moving average if TensorFlow not available
+                logger.warning("TensorFlow not available, using moving average fallback")
+                last_value = ts.iloc[-1]
+                weights = np.array([0.7, 0.2, 0.1])
+                if len(ts) >= 3:
+                    ma = np.convolve(ts[-3:], weights)[:1][0]
+                    # Simple trend extrapolation
+                    if len(ts) >= 6:
+                        first_3_avg = ts[-6:-3].mean()
+                        last_3_avg = ts[-3:].mean()
+                        if first_3_avg > 0:
+                            trend = (last_3_avg / first_3_avg) - 1
+                            trend = max(min(trend, 0.5), -0.3)  # Bound trend
+                        else:
+                            trend = 0
                     else:
                         trend = 0
+                    
+                    forecasts = [max(ma * (1 + trend * i/3), 1) for i in range(1, periods+1)]
                 else:
-                    trend = 0
-                
-                forecasts = [max(ma * (1 + trend * i/3), 1) for i in range(1, periods+1)]
-            else:
-                forecasts = [last_value] * periods
-            return np.array(forecasts)
-        
-        try:
+                    forecasts = [last_value] * periods
+                return np.array(forecasts)
+            
             # Normalize the time series
             min_val = ts.min()
             max_val = ts.max()
@@ -267,28 +344,27 @@ class DemandForecaster:
             return forecasts
             
         except Exception as e:
-            print(f"LSTM forecasting error: {e}")
-            # Fallback to simple extrapolation
-            last_value = ts.iloc[-1]
-            return np.array([last_value] * periods)
-            
+            last_value = ts.iloc[-1] if not ts.empty else 0
+            fallback_forecasts = np.array([last_value] * periods)
+            return handle_forecasting_error("_lstm_forecast", e, default_return=fallback_forecasts)
+
     def find_best_parameters(self, category, max_p=3, max_d=2, max_q=3):
         """
         Enhanced parameter selection with cross-validation
         """
         try:
             if category not in self.category_data:
-                print(f"Category '{category}' not found")
+                logger.warning(f"Category '{category}' not found")
                 return (1, 1, 1)
             
             col = self._get_count_column(category)
             if not col:
-                print(f"No suitable numeric column found for {category}")
+                logger.warning(f"No suitable numeric column found for {category}")
                 return (1, 1, 1)
                 
             ts = self.category_data[category][col]
             if len(ts) < 6:
-                print(f"Insufficient data for {category} to find optimal parameters, using default")
+                logger.info(f"Insufficient data for {category} to find optimal parameters, using default")
                 return (1, 1, 1)
                 
             # Remove outliers before model fitting
@@ -347,7 +423,9 @@ class DemandForecaster:
                                                     if rmse < min_rmse:
                                                         min_rmse = rmse
                                                         best_params = (p, d, q, P, D, Q, period)
-                                                except:
+                                                except Exception as model_error:
+                                                    # Log individual model failures at debug level
+                                                    logger.debug(f"SARIMAX({p},{d},{q})x({P},{D},{Q},{period}) failed: {model_error}")
                                                     continue
                                 else:
                                     model = ARIMA(train_data, order=(p, d, q))
@@ -362,11 +440,16 @@ class DemandForecaster:
                                     if rmse < min_rmse:
                                         min_rmse = rmse
                                         best_params = (p, d, q)
-                            except:
+                            except Exception as param_error:
+                                # Log individual parameter combinations at debug level
+                                if use_seasonal:
+                                    logger.debug(f"Parameter estimation failure for ({p},{d},{q}) with seasonality: {param_error}")
+                                else:
+                                    logger.debug(f"Parameter estimation failure for ({p},{d},{q}): {param_error}")
                                 continue
                 
                 if best_params:
-                    print(f"Best parameters for {category} (using CV): {best_params}, RMSE: {min_rmse:.2f}")
+                    logger.info(f"Best parameters for {category} (using CV): {best_params}, RMSE: {min_rmse:.2f}")
                     self.best_params[category] = best_params
                     return best_params
             
@@ -374,8 +457,7 @@ class DemandForecaster:
             return self._find_params_with_aic(ts_cleaned, use_seasonal, period, max_p, max_d, max_q)
             
         except Exception as e:
-            print(f"Error in parameter selection for {category}: {e}")
-            return (1, 1, 1)
+            return handle_forecasting_error("find_best_parameters", e, category=category, default_return=(1, 1, 1))
             
     def _find_params_with_aic(self, ts, use_seasonal, period, max_p, max_d, max_q):
         """Helper method for AIC-based parameter selection"""
@@ -486,41 +568,40 @@ class DemandForecaster:
         """
         Enhanced forecasting with multiple approaches and robust fallbacks
         """
-        if category not in self.category_data:
-            print(f"Category '{category}' not found")
-            return None
-        
-        count_column = self._get_count_column(category)
-        if not count_column:
-            print(f"No suitable numeric column found for {category}")
-            return None
-                
-        ts = self.category_data[category][count_column]
-        
-        # Remove outliers before modeling
-        ts_cleaned = self._remove_outliers(ts)
-        
-        # Prepare historical data for visualization
-        historical_data = []
-        for date, value in zip(ts.index, ts.values):
-            historical_data.append({
-                'date': date,
-                'value': float(value),
-                'type': 'historical'
-            })
-        
-        # Check if we have enough data for forecasting (at least 4 data points)
-        if len(ts_cleaned) < 4:
-            print(f"Insufficient data points for {category}, need at least 4 data points")
-            result = self._create_empty_forecast_results(category, ts)
-            result['visualization_data'] = historical_data
-            return result
-        
-        # Determine if we should use ARIMA or alternative models
         try:
+            if category not in self.category_data:
+                logger.warning(f"Category '{category}' not found")
+                return self._create_empty_forecast_results(category, pd.Series())
+            
+            count_column = self._get_count_column(category)
+            if not count_column:
+                logger.warning(f"No suitable numeric column found for {category}")
+                return self._create_empty_forecast_results(category, pd.Series())
+                    
+            ts = self.category_data[category][count_column]
+            
+            # Remove outliers before modeling
+            ts_cleaned = self._remove_outliers(ts)
+            
+            # Prepare historical data for visualization
+            historical_data = []
+            for date, value in zip(ts.index, ts.values):
+                historical_data.append({
+                    'date': date,
+                    'value': float(value),
+                    'type': 'historical'
+                })
+            
+            # Check if we have enough data for forecasting (at least 4 data points)
+            if len(ts_cleaned) < 4:
+                logger.info(f"Insufficient data points for {category}, need at least 4 data points")
+                result = self._create_empty_forecast_results(category, ts)
+                result['visualization_data'] = historical_data
+                return result
+            
             # Detect seasonality with confidence
             is_seasonal, period, confidence = self._detect_seasonality(ts_cleaned)
-            print(f"Seasonality detection for {category}: is_seasonal={is_seasonal}, period={period}, confidence={confidence:.2f}")
+            logger.info(f"Seasonality detection for {category}: is_seasonal={is_seasonal}, period={period}, confidence={confidence:.2f}")
             
             # Determine ARIMA parameters
             if use_best_params:
@@ -533,7 +614,7 @@ class DemandForecaster:
             
             # Handle None params
             if params is None:
-                print(f"Warning: No valid parameters found for {category}, using default (1,1,1)")
+                logger.warning(f"No valid parameters found for {category}, using default (1,1,1)")
                 params = (1, 1, 1)
             
             # Determine if using seasonal model (SARIMA)
@@ -549,7 +630,7 @@ class DemandForecaster:
                 return arima_result
                 
             # If ARIMA fails, try LSTM
-            print(f"ARIMA forecasting failed for {category}, trying LSTM")
+            logger.info(f"ARIMA forecasting failed for {category}, trying LSTM")
             lstm_result = self._try_lstm_forecast(
                 category, ts_cleaned, historical_data, periods
             )
@@ -558,17 +639,17 @@ class DemandForecaster:
                 return lstm_result
                 
             # If both fail, use fallback
-            print(f"All forecasting methods failed for {category}, using fallback")
+            logger.info(f"All forecasting methods failed for {category}, using fallback")
             fallback_result = self._create_empty_forecast_results(category, ts)
             fallback_result['visualization_data'] = historical_data
             return fallback_result
             
         except Exception as e:
-            print(f"Error in forecasting for {category}: {e}")
-            result = self._create_empty_forecast_results(category, ts)
-            result['visualization_data'] = historical_data
-            return result
-            
+            result = self._create_empty_forecast_results(category, pd.Series() if 'ts' not in locals() else ts)
+            if 'historical_data' in locals() and historical_data:
+                result['visualization_data'] = historical_data
+            return handle_forecasting_error("train_and_forecast", e, category=category, default_return=result)
+
     def _try_arima_forecast(self, category, ts_cleaned, params, use_seasonal, historical_data, periods):
         """Helper method for ARIMA forecasting attempt"""
         try:
@@ -579,14 +660,14 @@ class DemandForecaster:
             mae, rmse, mape_val = None, None, None
             
             if test_size > 0:
-                train, test = ts_cleaned[:train_size], ts_cleaned[train_size:]
-                
                 try:
+                    train, test = ts_cleaned[:train_size], ts_cleaned[train_size:]
+                    
                     if use_seasonal:
                         from statsmodels.tsa.statespace.sarimax import SARIMAX
                         p, d, q, P, D, Q, s = params
                         model = SARIMAX(train, order=(p, d, q), seasonal_order=(P, D, Q, s),
-                                      enforce_stationarity=False, enforce_invertibility=False)
+                                    enforce_stationarity=False, enforce_invertibility=False)
                         model_fit = model.fit(disp=False)
                     else:
                         model = ARIMA(train, order=params)
@@ -605,29 +686,31 @@ class DemandForecaster:
                         
                         # If MAPE is very high (> 50%), recommend alternative model
                         if mape_val is not None and mape_val > 50:
-                            print(f"ARIMA model has high MAPE ({mape_val:.2f}%), result may not be reliable")
-                            # Continue with ARIMA but note the high error
+                            logger.warning(f"ARIMA model has high MAPE ({mape_val:.2f}%) for {category}, result may not be reliable")
                     else:
-                        print(f"Warning: Length mismatch between test and forecast for {category}")
-                        mae = rmse = mape_val = None
+                        logger.warning(f"Length mismatch between test and forecast for {category}")
                 except Exception as e:
-                    print(f"Error in model validation for {category}: {e}")
-                    return False, None
+                    return handle_forecasting_error("_try_arima_forecast", e, category=category, 
+                                                    default_return=(False, None))
             
             self.performance[category] = {'mae': mae, 'rmse': rmse, 'mape': mape_val}
             
-            # Generate forecasts
-            if use_seasonal:
-                from statsmodels.tsa.statespace.sarimax import SARIMAX
-                p, d, q, P, D, Q, s = params
-                final_model = SARIMAX(ts_cleaned, order=(p, d, q), seasonal_order=(P, D, Q, s),
-                                    enforce_stationarity=False, enforce_invertibility=False)
-                final_model_fit = final_model.fit(disp=False)
-            else:
-                final_model = ARIMA(ts_cleaned, order=params)
-                final_model_fit = final_model.fit()
-            
-            forecast_values = final_model_fit.forecast(steps=periods)
+            # Generate forecasts with final model
+            try:
+                if use_seasonal:
+                    from statsmodels.tsa.statespace.sarimax import SARIMAX
+                    p, d, q, P, D, Q, s = params
+                    final_model = SARIMAX(ts_cleaned, order=(p, d, q), seasonal_order=(P, D, Q, s),
+                                        enforce_stationarity=False, enforce_invertibility=False)
+                    final_model_fit = final_model.fit(disp=False)
+                else:
+                    final_model = ARIMA(ts_cleaned, order=params)
+                    final_model_fit = final_model.fit()
+                
+                forecast_values = final_model_fit.forecast(steps=periods)
+            except Exception as e:
+                return handle_forecasting_error("_try_arima_forecast (final model)", e, category=category, 
+                                            default_return=(False, None))
             
             # Apply reasonability constraints to forecasts
             historical_mean = ts_cleaned.mean()
@@ -661,15 +744,17 @@ class DemandForecaster:
             forecast_values = np.maximum(forecast_values, 0)
             
             # Create forecast index
-            if isinstance(ts_cleaned.index[-1], pd.Timestamp):
-                last_date = ts_cleaned.index[-1]
-                forecast_index = pd.date_range(start=last_date, periods=periods+1, freq='MS')[1:]
-            else:
-                try:
+            forecast_index = None
+            try:
+                if isinstance(ts_cleaned.index[-1], pd.Timestamp):
+                    last_date = ts_cleaned.index[-1]
+                    forecast_index = pd.date_range(start=last_date, periods=periods+1, freq='MS')[1:]
+                else:
                     last_idx = int(ts_cleaned.index[-1])
                     forecast_index = range(last_idx + 1, last_idx + periods + 1)
-                except Exception:
-                    forecast_index = range(periods)
+            except Exception as idx_err:
+                logger.warning(f"Error creating forecast index for {category}: {idx_err}. Using range index.")
+                forecast_index = range(periods)
             
             # Create forecast DataFrame with confidence intervals
             forecast_df = pd.DataFrame({'forecast': forecast_values}, index=forecast_index)
@@ -718,8 +803,7 @@ class DemandForecaster:
             }
         
         except Exception as e:
-            print(f"Error in ARIMA forecasting for {category}: {e}")
-            return False, None
+            return handle_forecasting_error("_try_arima_forecast", e, category=category, default_return=(False, None))
             
     def _try_lstm_forecast(self, category, ts_cleaned, historical_data, periods):
         """Helper method for LSTM forecasting attempt"""
@@ -728,15 +812,17 @@ class DemandForecaster:
             forecast_values = self._lstm_forecast(ts_cleaned, periods=periods)
             
             # Create forecast index
-            if isinstance(ts_cleaned.index[-1], pd.Timestamp):
-                last_date = ts_cleaned.index[-1]
-                forecast_index = pd.date_range(start=last_date, periods=periods+1, freq='MS')[1:]
-            else:
-                try:
+            forecast_index = None
+            try:
+                if isinstance(ts_cleaned.index[-1], pd.Timestamp):
+                    last_date = ts_cleaned.index[-1]
+                    forecast_index = pd.date_range(start=last_date, periods=periods+1, freq='MS')[1:]
+                else:
                     last_idx = int(ts_cleaned.index[-1])
                     forecast_index = range(last_idx + 1, last_idx + periods + 1)
-                except Exception:
-                    forecast_index = range(periods)
+            except Exception as idx_err:
+                logger.warning(f"Error creating forecast index for {category}: {idx_err}. Using range index.")
+                forecast_index = range(periods)
             
             # Create forecast DataFrame
             forecast_df = pd.DataFrame({'forecast': forecast_values}, index=forecast_index)
@@ -764,12 +850,16 @@ class DemandForecaster:
             # Estimate MAPE for the LSTM model
             lstm_mape = None
             if len(ts_cleaned) >= 6:
-                train_lstm = ts_cleaned[:-3]
-                test_lstm = ts_cleaned[-3:]
-                
-                # Simple forecast test with LSTM
-                test_forecasts = self._lstm_forecast(train_lstm, periods=3)
-                lstm_mape = self.calculate_robust_mape(test_lstm.values, test_forecasts)
+                try:
+                    train_lstm = ts_cleaned[:-3]
+                    test_lstm = ts_cleaned[-3:]
+                    
+                    # Simple forecast test with LSTM
+                    test_forecasts = self._lstm_forecast(train_lstm, periods=3)
+                    lstm_mape = self.calculate_robust_mape(test_lstm.values, test_forecasts)
+                except Exception as mape_err:
+                    logger.warning(f"Error estimating LSTM MAPE for {category}: {mape_err}")
+                    lstm_mape = 30  # Default value on error
             
             if lstm_mape is None:
                 lstm_mape = 30  # Default MAPE if estimation fails
@@ -805,8 +895,7 @@ class DemandForecaster:
             }
             
         except Exception as e:
-            print(f"Error in LSTM forecasting for {category}: {e}")
-            return None
+            return handle_forecasting_error("_try_lstm_forecast", e, category=category, default_return=None)
             
     def calculate_robust_mape(self, actuals, forecasts):
         """
@@ -983,65 +1072,108 @@ class DemandForecaster:
         return count_column
 
     def preprocess_forecast_data(self):
-        """Preprocess data for time series analysis with enhanced date handling."""
-        if 'year' not in self.data.columns or 'month' not in self.data.columns:
-            date_columns = [col for col in self.data.columns if 'timestamp' in col.lower() or 'date' in col.lower()]
-            if date_columns:
-                date_col = date_columns[0]
-                print(f"Using {date_col} to extract year and month")
-                self.data[date_col] = pd.to_datetime(self.data[date_col])
-                self.data['year'] = self.data[date_col].dt.year
-                self.data['month'] = self.data[date_col].dt.month
-                self.data['date'] = pd.to_datetime(
-                    self.data['year'].astype(str) + '-' +
-                    self.data['month'].astype(str).str.zfill(2) + '-01'
-                )
+        """
+        Preprocess data for time series analysis with enhanced error handling
+        """
+        try:
+            self.logger.info("Preprocessing forecast data")
+            
+            # Extract date information for time series analysis
+            if 'year' not in self.data.columns or 'month' not in self.data.columns:
+                date_columns = [col for col in self.data.columns if 'timestamp' in col.lower() or 'date' in col.lower()]
+                if date_columns:
+                    date_col = date_columns[0]
+                    self.logger.info(f"Using {date_col} to extract year and month")
+                    try:
+                        self.data[date_col] = pd.to_datetime(self.data[date_col])
+                        self.data['year'] = self.data[date_col].dt.year
+                        self.data['month'] = self.data[date_col].dt.month
+                        self.data['date'] = pd.to_datetime(
+                            self.data['year'].astype(str) + '-' +
+                            self.data['month'].astype(str).str.zfill(2) + '-01'
+                        )
+                    except Exception as date_err:
+                        self.logger.error(f"Error processing date column {date_col}: {date_err}")
+                        # Fallback: create synthetic dates
+                        self.data['date'] = pd.date_range(start='2021-01-01', periods=len(self.data), freq='M')
+                        self.data['year'] = self.data['date'].dt.year
+                        self.data['month'] = self.data['date'].dt.month
+                else:
+                    self.logger.warning("No timestamp columns found, using order_year and order_month if available")
+                    year_col = next((col for col in self.data.columns if 'year' in col.lower()), None)
+                    month_col = next((col for col in self.data.columns if 'month' in col.lower()), None)
+                    if year_col and month_col:
+                        self.data['year'] = self.data[year_col]
+                        self.data['month'] = self.data[month_col]
+                        try:
+                            self.data['date'] = pd.to_datetime(
+                                self.data['year'].astype(str) + '-' +
+                                self.data['month'].astype(str).str.zfill(2) + '-01'
+                            )
+                        except Exception as date_err:
+                            self.logger.error(f"Error creating date from year/month: {date_err}")
+                            # Fallback: create synthetic dates
+                            self.data['date'] = pd.date_range(start='2021-01-01', periods=len(self.data), freq='M')
+                    else:
+                        self.logger.warning("No date components found. Using index as date reference.")
+                        self.data['date'] = pd.date_range(start='2021-01-01', periods=len(self.data), freq='M')
+                        self.data['year'] = self.data['date'].dt.year
+                        self.data['month'] = self.data['date'].dt.month
             else:
-                print("No timestamp columns found, using order_year and order_month if available")
-                year_col = next((col for col in self.data.columns if 'year' in col.lower()), None)
-                month_col = next((col for col in self.data.columns if 'month' in col.lower()), None)
-                if year_col and month_col:
-                    self.data['year'] = self.data[year_col]
-                    self.data['month'] = self.data[month_col]
+                # Year and month columns exist, create a proper date column
+                try:
                     self.data['date'] = pd.to_datetime(
                         self.data['year'].astype(str) + '-' +
                         self.data['month'].astype(str).str.zfill(2) + '-01'
                     )
-                else:
-                    print("WARNING: No date columns found. Using index as date reference.")
+                except Exception as date_err:
+                    self.logger.error(f"Error creating date from existing year/month: {date_err}")
+                    # Fallback: create synthetic dates
                     self.data['date'] = pd.date_range(start='2021-01-01', periods=len(self.data), freq='M')
-                    self.data['year'] = self.data['date'].dt.year
-                    self.data['month'] = self.data['date'].dt.month
-        else:
-            self.data['date'] = pd.to_datetime(
-                self.data['year'].astype(str) + '-' +
-                self.data['month'].astype(str).str.zfill(2) + '-01'
-            )
-        self.category_data = {}
-        for category in self.categories:
-            if pd.isna(category):
-                continue
-            category_df = self.data[self.data['product_category_name'] == category].copy()
-            category_df.sort_values('date', inplace=True)
-            category_df.set_index('date', inplace=True)
-            self.category_data[category] = category_df
-        possible_count_columns = ['order_count', 'count', 'order_id_count', 'count(order_id)']
-        for category in self.category_data:
-            for col in possible_count_columns:
-                if col in self.category_data[category].columns:
-                    self.count_column = col
-                    print(f"Using '{self.count_column}' as count column")
-                    break
-            if self.count_column:
-                break
-        if not self.count_column:
-            for category in self.category_data:
-                numeric_cols = self.category_data[category].select_dtypes(include=['number']).columns
-                if len(numeric_cols) > 0:
-                    self.count_column = numeric_cols[0]
-                    print(f"No standard count column found. Using '{self.count_column}' as count column")
-                    break
-        print(f"Processed {len(self.category_data)} categories")
+            
+            # Group data by category
+            self.category_data = {}
+            valid_categories = 0
+            for category in self.categories:
+                if pd.isna(category):
+                    continue
+                try:
+                    category_df = self.data[self.data['product_category_name'] == category].copy()
+                    category_df.sort_values('date', inplace=True)
+                    category_df.set_index('date', inplace=True)
+                    self.category_data[category] = category_df
+                    valid_categories += 1
+                except Exception as cat_err:
+                    self.logger.warning(f"Error processing category {category}: {cat_err}")
+            
+            # Identify count column if not already set
+            if not self.count_column:
+                possible_count_columns = ['order_count', 'count', 'order_id_count', 'count(order_id)']
+                for category in self.category_data:
+                    for col in possible_count_columns:
+                        if col in self.category_data[category].columns:
+                            self.count_column = col
+                            self.logger.info(f"Using '{self.count_column}' as count column")
+                            break
+                    if self.count_column:
+                        break
+                
+                # If no standard count column found, try to find a numeric column
+                if not self.count_column:
+                    for category in self.category_data:
+                        numeric_cols = self.category_data[category].select_dtypes(include=['number']).columns
+                        if len(numeric_cols) > 0:
+                            self.count_column = numeric_cols[0]
+                            self.logger.info(f"No standard count column found. Using '{self.count_column}' as count column")
+                            break
+            
+            self.logger.info(f"Processed {valid_categories} valid categories")
+            
+        except Exception as e:
+            self.logger.error(f"Error in preprocess_forecast_data: {e}")
+            # Ensure category_data exists even if empty, to prevent errors
+            if not hasattr(self, 'category_data'):
+                self.category_data = {}
 
     def test_stationarity(self, category):
         """
@@ -1177,28 +1309,74 @@ class DemandForecaster:
             plt.close()
 
     def run_all_forecasts(self, top_n=5, periods=6):
-        if not hasattr(self, 'category_data'):
-            self.preprocess_data()
-        all_categories = {}
-        for category, df in self.category_data.items():
-            col = self._get_count_column(category)
-            if col:
-                total_demand = df[col].sum()
-                all_categories[category] = 0 if pd.isna(total_demand) else total_demand
-        top_categories = sorted(all_categories.items(), key=lambda x: x[1], reverse=True)[:top_n]
-        import gc
-        for i, (category, _) in enumerate(top_categories):
-            print(f"\nProcessing category: {category} ({i+1}/{len(top_categories)})")
-            self.train_and_forecast(category, periods=periods)
-            gc.collect()
-        for category, _ in top_categories:
-            if category in self.forecasts:
-                self.calculate_consistent_growth_rate(category)
-        result_forecasts = {}
-        for category, _ in top_categories:
-            if category in self.forecasts:
-                result_forecasts[category] = self.forecasts[category].copy()
-        return result_forecasts
+        """
+        Run forecasts for top categories with improved error handling
+        
+        Args:
+            top_n: Number of top categories to analyze
+            periods: Number of periods to forecast
+            
+        Returns:
+            Dictionary with forecasts for top categories
+        """
+        try:
+            if not hasattr(self, 'category_data') or not self.category_data:
+                self.logger.info("Preprocessing data before running forecasts")
+                self.preprocess_forecast_data()
+                
+            # Handle the case where preprocessing might have failed
+            if not hasattr(self, 'category_data') or not self.category_data:
+                self.logger.error("No category data available after preprocessing")
+                return {}
+                
+            all_categories = {}
+            for category, df in self.category_data.items():
+                col = self._get_count_column(category)
+                if col:
+                    try:
+                        total_demand = df[col].sum()
+                        all_categories[category] = 0 if pd.isna(total_demand) else total_demand
+                    except Exception as sum_err:
+                        self.logger.warning(f"Error calculating demand for {category}: {sum_err}")
+                        all_categories[category] = 0
+            
+            # Sort categories by total demand for top-n selection
+            top_categories = sorted(all_categories.items(), key=lambda x: x[1], reverse=True)[:top_n]
+            self.logger.info(f"Selected top {len(top_categories)} categories for forecasting")
+            
+            import gc
+            result_forecasts = {}
+            
+            # Process each category, with robust error handling
+            for i, (category, _) in enumerate(top_categories):
+                self.logger.info(f"Processing category: {category} ({i+1}/{len(top_categories)})")
+                try:
+                    forecast_result = self.train_and_forecast(category, periods=periods)
+                    if forecast_result:
+                        # Successfully generated forecast
+                        result_forecasts[category] = self.forecasts.get(category, pd.DataFrame())
+                except Exception as cat_err:
+                    self.logger.error(f"Failed to process category {category}: {cat_err}")
+                    # Continue with next category instead of failing the entire run
+                
+                # Free memory
+                gc.collect()
+            
+            # Calculate growth rates for successfully forecasted categories
+            for category, _ in top_categories:
+                if category in self.forecasts:
+                    try:
+                        self.calculate_consistent_growth_rate(category)
+                    except Exception as gr_err:
+                        self.logger.warning(f"Failed to calculate growth rate for {category}: {gr_err}")
+            
+            # Return only successful forecasts
+            self.logger.info(f"Completed forecasting for {len(result_forecasts)}/{len(top_categories)} categories")
+            return result_forecasts
+        except Exception as e:
+            self.logger.error(f"Fatal error in run_all_forecasts: {e}")
+            return {}
+
 
     def plot_forecast(self, category, figsize=(12, 6)):
         try:
