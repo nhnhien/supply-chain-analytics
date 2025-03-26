@@ -24,7 +24,7 @@ This project uses big data analytics techniques to optimize supply chain operati
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/yourusername/supply-chain-analytics.git
+git clone https://github.com/nhiennh/supply-chain-analytics.git
 cd supply-chain-analytics
 ```
 

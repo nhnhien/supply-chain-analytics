@@ -19,6 +19,7 @@ import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as RechartsToolti
 import TopCategoriesChart from '../components/TopCategoriesChart';
 import SellerPerformanceChart from '../components/SellerPerformanceChart';
 import KPICard from '../components/KPICard';
+import ImprovedDemandChart from '../components/ImprovedDemandChart';
 
 const DashboardPage = ({ data }) => {
   const theme = useTheme();
@@ -247,79 +248,13 @@ const DashboardPage = ({ data }) => {
 </Box>
 
 <Grid container spacing={4}>
-  {/* First row: Historical Monthly Demand */}
+  {/* First row: Improved Historical Monthly Demand */}
   <Grid item xs={12}>
-    <Paper elevation={3} sx={{ 
-      p: 4, 
-      display: 'flex', 
-      flexDirection: 'column', 
-      height: 450,
-      borderRadius: 2,
-      boxShadow: '0 4px 20px rgba(0,0,0,0.1)'
-    }}>
-      <Typography component="h2" variant="h6" gutterBottom sx={{ 
-        color: theme.palette.primary.main,
-        fontWeight: 'bold',
-        display: 'flex',
-        alignItems: 'center',
-        borderBottom: `1px solid ${theme.palette.divider}`,
-        pb: 1
-      }}>
-        <TrendingUpIcon sx={{ mr: 1 }} /> Historical Monthly Demand (2017-2018)
-      </Typography>
-      <ResponsiveContainer width="100%" height="100%">
-        <LineChart
-          data={demandData}
-          margin={{ top: 5, right: 30, left: 20, bottom: 5 }}
-        >
-          <CartesianGrid strokeDasharray="3 3" stroke={theme.palette.divider} />
-          <XAxis 
-            dataKey="date" 
-            tickFormatter={(date) => {
-              if (date instanceof Date) {
-                return date.toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
-              }
-              return '';
-            }}
-            stroke={theme.palette.text.secondary}
-          />
-          <YAxis stroke={theme.palette.text.secondary} />
-          <RechartsTooltip 
-            formatter={(value) => new Intl.NumberFormat().format(value)}
-            labelFormatter={(label) => {
-              if (label instanceof Date) {
-                return label.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
-              }
-              return label;
-            }}
-            contentStyle={{ 
-              backgroundColor: theme.palette.background.paper,
-              borderColor: theme.palette.divider,
-              borderRadius: 8,
-              boxShadow: theme.shadows[3]
-            }}
-          />
-          <Legend 
-            verticalAlign="bottom" 
-            height={36} 
-            wrapperStyle={{ paddingTop: '10px' }}
-          />
-          {(categories.topCategories || []).slice(0, 3).map((category, index) => (
-            <Line 
-              key={category}
-              type="monotone" 
-              dataKey="count"
-              data={categories.categoryData?.[category] || []}
-              name={category}
-              stroke={chartColors.chart[index % chartColors.chart.length]}
-              strokeWidth={2}
-              dot={{ r: 4 }}
-              activeDot={{ r: 6, stroke: theme.palette.background.paper, strokeWidth: 2 }}
-            />
-          ))}
-        </LineChart>
-      </ResponsiveContainer>
-    </Paper>
+    <ImprovedDemandChart 
+      demandData={demandData}
+      categories={categories}
+      theme={theme}
+    />
   </Grid>
   
   {/* Second row: Top Product Categories */}
@@ -502,39 +437,27 @@ const DashboardPage = ({ data }) => {
                 } 
                 secondary={
                   <Box sx={{ mt: 0.5 }}>
-                    <Typography variant="body2" component="div">
-                      {rec?.recommendation || 
-                        (rec?.reorder_point != null && rec?.safety_stock != null) ?
+                    <Typography variant="body2" component="span">
+                      {rec?.recommendation ? (
+                        rec.recommendation
+                      ) : (rec?.reorder_point != null && rec?.safety_stock != null) ? (
                         <>
                           <Box component="span" sx={{ display: 'flex', alignItems: 'center', mb: 0.5 }}>
-                            <Box 
-                              component="span" 
-                              sx={{ 
-                                width: 8, 
-                                height: 8, 
-                                borderRadius: '50%', 
-                                bgcolor: theme.palette.warning.main,
-                                mr: 1
-                              }} 
-                            />
-                            Reorder at: <b style={{ marginLeft: 4 }}>{rec.reorder_point.toFixed(0)} units</b>
+                            <Box component="span" sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: theme.palette.warning.main, mr: 1 }} />
+                            Reorder at: <b style={{ marginLeft: 4 }}>
+                              {isFinite(parseFloat(rec.reorder_point)) ? parseFloat(rec.reorder_point).toFixed(0) : "N/A"} units
+                            </b>
                           </Box>
                           <Box component="span" sx={{ display: 'flex', alignItems: 'center' }}>
-                            <Box 
-                              component="span" 
-                              sx={{ 
-                                width: 8, 
-                                height: 8, 
-                                borderRadius: '50%', 
-                                bgcolor: theme.palette.info.main,
-                                mr: 1
-                              }} 
-                            />
-                            Safety stock: <b style={{ marginLeft: 4 }}>{rec.safety_stock.toFixed(0)} units</b>
+                            <Box component="span" sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: theme.palette.info.main, mr: 1 }} />
+                            Safety stock: <b style={{ marginLeft: 4 }}>
+                              {isFinite(parseFloat(rec.safety_stock)) ? parseFloat(rec.safety_stock).toFixed(0) : "N/A"} units
+                            </b>
                           </Box>
-                        </> :
+                        </>
+                      ) : (
                         'No recommendation available'
-                    }
+                      )}
                     </Typography>
                   </Box>
                 } 
